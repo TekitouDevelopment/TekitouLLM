@@ -4,38 +4,45 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Random;
 import java.util.Scanner;
+import java.util.stream.IntStream;
 
 public class Main {
     static void main() {
 
 
-        long seed = 1234L;
+        long seed = 12345L;
         Random random = new Random(seed);
 
         // 1. 複数の会話パターン（データセット）を用意する
         String[] dataset = {
-                "Vulkan（ヴァルカン）は、クロノス・グループ（英: Khronos Group）が策定している、「PCやコンソールから、携帯電話や組込みプラットフォームに至るまで、あらゆるデバイスで使われる最先端のGPUに高効率かつクロスプラットフォーム型のアクセスを実現する、新世代のグラフィックス/コンピュートAPI」で、オープンスタンダード・ロイヤリティフリー・クロスプラットフォームとして提唱されている。Vulkan 1.0の仕様の公開日は2016年2月16日である。",
+                "あなたは、今日何時に起きましたか？",
+                "7時に起きました。"
         };
 
         // 2. すべてのテキストから文字を集めて辞書を作る
         HashMap<Character, Integer> charToId = new HashMap<>();
         HashMap<Integer, Character> idToChar = new HashMap<>();
-        int nextId = 0;
 
-        for (String text : dataset) {
-            for (int i = 0; i < text.length(); i++) {
-                char c = text.charAt(i);
-                if (!charToId.containsKey(c)) {
-                    charToId.put(c, nextId);
-                    idToChar.put(nextId, c);
-                    nextId++;
-                }
-            }
-        } // ← ここで dataset のループをしっかり閉じる！
+        // ステップ1: 【並列処理】dataset全体の文字スキャンと重複排除を全コアで爆速で行う！
+        java.util.List<Character> uniqueChars = java.util.Arrays.stream(dataset)
+                .parallel() // 👈 ここで全CPUコアを使って一気に文字を回収！
+                .flatMapToInt(String::chars)
+                .mapToObj(c -> (char) c)
+                .distinct() // 重複を消す
+                .sorted()   // ★超重要：IDが毎回バラバラにならないように順番を固定する
+                .collect(java.util.stream.Collectors.toList());
+
+        // ステップ2: 【順番処理】集まった文字たちに 0, 1, 2... と綺麗にIDを振る
+        int nextId = 0;
+        for (char c : uniqueChars) {
+            charToId.put(c, nextId);
+            idToChar.put(nextId, c);
+            nextId++;
+        }
 
         int vocabSize = charToId.size(); // 辞書にある文字の種類数
         int vectorSize = 64;             // 空間の次元数（特徴の数）
-        int dModel = vectorSize;         // 16次元
+        int dModel = vectorSize;
 
         // 3. 16次元の埋め込みテーブルを初期化
         double[][] embeddingTable = new double[vocabSize][vectorSize];
@@ -48,8 +55,8 @@ public class Main {
         // ==========================================
         // ★ここから学習ループをスタート！
         // ==========================================
-        int epochs = 80000;
-        double learningRate = 0.001;
+        int epochs = 100000;
+        double learningRate = 0.0005;
 
         // 勾配配列の事前確保（ループの外で1度だけnewする）
         double[][] dWOut   = new double[vectorSize /*dModel*/][vocabSize];
@@ -168,81 +175,89 @@ public class Main {
 
 
         // 5. 位置エンコーディング（Positional Encoding）を足し合わせる
-        for (int i = 0; i < encoded.length; i++) { // 文字の順番（何番目か）
-            for (int j = 0; j < vectorSize; j++) { // 16次元のそれぞれの場所
-                // 位置によって変わる特殊な数値を計算する
-                double angle = i / Math.pow(10000.0, (double) (2 * (j / 2)) / vectorSize);
 
-                // 偶数番目の次元なら sin、奇数番目なら cos を足す
-                if (j % 2 == 0) {
-                    inputEmbeddings[i][j] += Math.sin(angle);
-                } else {
-                    inputEmbeddings[i][j] += Math.cos(angle);
+
+            double[] invFreq = new double[vectorSize];
+            for (int j = 0; j < vectorSize; j++) {
+                // 2 * (j / 2) は、0, 0, 2, 2, 4, 4... というように偶数ペアで同じ値になるおまじない
+                double exponent = (double) (2 * (j / 2)) / vectorSize;
+                invFreq[j] = 1.0 / Math.pow(10000.0, exponent);
+            }
+
+// ② メインのループ（Math.powが消えて、掛け算だけに進化！）
+            for (int i = 0; i < encoded.length; i++) {
+                for (int j = 0; j < vectorSize; j++) {
+                    // 重い Math.pow の代わりに、あらかじめ用意した配列の値を「かける」だけにする！
+                    double angle = i * invFreq[j];
+
+                    if (j % 2 == 0) {
+                        inputEmbeddings[i][j] += Math.sin(angle);
+                    } else {
+                        inputEmbeddings[i][j] += Math.cos(angle);
+                    }
                 }
             }
-        }
 
 
 
         // 6. Query (Q) の作成に特化した処理
 
         // 入力データ × Wq = Query (Q)
-        double[][] query = new double[encoded.length][dModel];
+            double[][] query = new double[encoded.length][dModel];
 
-        for (int i = 0; i < encoded.length; i++) {       // 各文字について
-            for (int j = 0; j < dModel; j++) {          // 16次元のそれぞれの場所
-                double sum = 0.0;
-                for (int k = 0; k < dModel; k++) {      // 行列の掛け算
-                    sum += inputEmbeddings[i][k] * wq[k][j];
+            java.util.stream.IntStream.range(0, encoded.length).parallel().forEach(i -> {
+                for (int j = 0; j < dModel; j++) {
+                    double sum = 0.0;
+                    for (int k = 0; k < dModel; k++) {
+                        sum += inputEmbeddings[i][k] * wq[k][j];
+                    }
+                    query[i][j] = sum;
                 }
-                query[i][j] = sum; // これが文字ごとの「検索キーワード(Q)」！
-            }
-        }
+            });
 
 
 
         // 7. Key (K) を作るための重み行列（16次元 × 16次元）
 
         // 入力データ（inputEmbeddings） × Wk = Key (K)
-        double[][] key = new double[encoded.length][dModel];
+            double[][] key = new double[encoded.length][dModel];
 
-        for (int i = 0; i < encoded.length; i++) {       // 各文字について
-            for (int j = 0; j < dModel; j++) {          // 16次元のそれぞれの場所
-                double sum = 0.0;
-                for (int k = 0; k < dModel; k++) {      // 行列の掛け算
-                    sum += inputEmbeddings[i][k] * wk[k][j];
+            java.util.stream.IntStream.range(0, encoded.length).parallel().forEach(i -> {
+                for (int j = 0; j < dModel; j++) {
+                    double sum = 0.0;
+                    for (int k = 0; k < dModel; k++) {
+                        sum += inputEmbeddings[i][k] * wk[k][j];
+                    }
+                    key[i][j] = sum;
                 }
-                key[i][j] = sum; // これが文字ごとの「目印(K)」！
-            }
-        }
+            });
 
         // 8. Value (V) を作るための重み行列（16次元 × 16次元）
 
             // 入力データ（inputEmbeddings） × Wv = Value (V)
-        double[][] value = new double[encoded.length][dModel];
+            double[][] value = new double[encoded.length][dModel];
 
-        for (int i = 0; i < encoded.length; i++) {       // 各文字について
-            for (int j = 0; j < dModel; j++) {          // 16次元のそれぞれの場所
-                double sum = 0.0;
-                for (int k = 0; k < dModel; k++) {      // 行列の掛け算
-                    sum += inputEmbeddings[i][k] * wv[k][j];
+            java.util.stream.IntStream.range(0, encoded.length).parallel().forEach(i -> {
+                for (int j = 0; j < dModel; j++) {
+                    double sum = 0.0;
+                    for (int k = 0; k < dModel; k++) {
+                        sum += inputEmbeddings[i][k] * wv[k][j];
+                    }
+                    value[i][j] = sum;
                 }
-                value[i][j] = sum; // これが文字ごとの「中身(V)」！
-            }
-        }
-
+            });
 
 
         // 9. Causal Mask 付き Self-Attention のスコア計算
-        double[][] attentionScores = new double[seqLen][seqLen];
-        double scale = Math.sqrt(dModel);
+            double[][] attentionScores = new double[seqLen][seqLen];
+            double scale = Math.sqrt(dModel);
 
-        for (int i = 0; i < seqLen; i++) {
-            for (int j = 0; j < seqLen; j++) {
-                if (j > i) {
-                    // 【Causal Mask】未来の文字へのカンニングを防止するため、極端に低い値で塞ぐ
-                    attentionScores[i][j] = -1e9;
-                } else {
+            for (int i = 0; i < seqLen; i++) {
+                // ① まず、未来の分（j > i）は全部 -1e9 で埋めておく
+                java.util.Arrays.fill(attentionScores[i], -1e9);
+
+                // ② 過去〜現在の自分自身（j <= i）の分だけ、必要なところだけ真面目に計算する
+                for (int j = 0; j <= i; j++) {
                     double dotProduct = 0.0;
                     for (int k = 0; k < dModel; k++) {
                         dotProduct += query[i][k] * key[j][k];
@@ -250,139 +265,124 @@ public class Main {
                     attentionScores[i][j] = dotProduct / scale;
                 }
             }
-        }
-
 
         // 10. Softmax関数でスコアを「注目度の割合（確率）」に変換する
         double[][] attentionWeights = new double[seqLen][seqLen];
-
-        for (int i = 0; i < seqLen; i++) {       // 各文字（行）ごとに計算
-
-            // ① オーバーフロー防止（数値が大きくなりすぎて壊れるのを防ぐおまじない）
-            // 行の中で一番大きい数字を見つける
-            double max = attentionScores[i][0];
-            for (int j = 1; j < seqLen; j++) {
-                if (attentionScores[i][j] > max) {
-                    max = attentionScores[i][j];
+            java.util.stream.IntStream.range(0, seqLen).parallel().forEach(i -> {
+                double max = attentionScores[i][0];
+                for (int j = 1; j < seqLen; j++) {
+                    if (attentionScores[i][j] > max) {
+                        max = attentionScores[i][j];
+                    }
                 }
-            }
 
-            // ② 指数関数（exp）を計算しつつ、行ごとの合計を求める
-            double sum = 0.0;
-            double[] expRow = new double[seqLen];
-            for (int j = 0; j < seqLen; j++) {
-                expRow[j] = Math.exp(attentionScores[i][j] - max); // maxを引くのが安全テクニック
-                sum += expRow[j];
-            }
+                double sum = 0.0;
+                double[] expRow = new double[seqLen];
+                for (int j = 0; j < seqLen; j++) {
+                    expRow[j] = Math.exp(attentionScores[i][j] - max);
+                    sum += expRow[j];
+                }
 
-            // ③ 合計で割って、合計が「1.0（100%）」になるように正規化する
-            for (int j = 0; j < seqLen; j++) {
-                attentionWeights[i][j] = expRow[j] / sum;
-            }
-        }
+                for (int j = 0; j < seqLen; j++) {
+                    attentionWeights[i][j] = expRow[j] / sum;
+                }
+            });
 
 
 
         // 11. Value (V) の情報を混ぜ合わせる（重み付き和の計算）
-        double[][] attentionOutput = new double[seqLen][dModel];
+            double[][] attentionOutput = new double[seqLen][dModel];
 
-        for (int i = 0; i < seqLen; i++) {       // 各文字（注目する側）について
-            for (int j = 0; j < dModel; j++) {   // 16次元のそれぞれの場所
-                double weightedSum = 0.0;
-                for (int k = 0; k < seqLen; k++) { // 他のすべての文字からのVをウェイト付きで足し合わせる
-                    weightedSum += attentionWeights[i][k] * value[k][j];
+            java.util.stream.IntStream.range(0, seqLen).parallel().forEach(i -> {
+                for (int j = 0; j < dModel; j++) {
+                    double weightedSum = 0.0;
+                    for (int k = 0; k < seqLen; k++) {
+                        weightedSum += attentionWeights[i][k] * value[k][j];
+                    }
+                    attentionOutput[i][j] = weightedSum;
                 }
-                attentionOutput[i][j] = weightedSum; // これが文脈を吸い込んだ新しいベクトル！
-            }
-        }
+            });
 
         // ==========================================
 // 12. 最先端LLM仕様：SwiGLU（Feed-Forward Network）の完全実装
 // ==========================================
 
+            double[][] ffnOutput = new double[seqLen][dModel];
 
-// FFNの出力格納用配列（5行 16列）
-        double[][] ffnOutput = new double[seqLen][dModel];
+// 外側のループを並列ストリームに置き換える
+            IntStream.range(0, seqLen).parallel().forEach(i -> {
+                // 各スレッドごとに独立した配列が作られるので安全！
+                double[] gate = new double[dHidden];
+                double[] up = new double[dHidden];
+                double[] gatedValue = new double[dHidden];
 
-// 各文字（シーケンスごと）に計算を実行
-        for (int i = 0; i < seqLen; i++) {
+                for (int j = 0; j < dHidden; j++) {
+                    double sumGate = 0.0;
+                    double sumUp = 0.0;
 
-            // ステップ1: Gate Projection + Swish (SiLU) 関数の適用
-            double[] gate = new double[dHidden];
-            for (int j = 0; j < dHidden; j++) {
-                double sum = 0.0;
-                for (int k = 0; k < dModel; k++) {
-                    sum += attentionOutput[i][k] * wGate[k][j];
+                    for (int k = 0; k < dModel; k++) {
+                        double val = attentionOutput[i][k];
+                        sumGate += val * wGate[k][j];
+                        sumUp += val * wUp[k][j];
+                    }
+
+                    double sigmoid = 1.0 / (1.0 + Math.exp(-sumGate));
+                    gate[j] = sumGate * sigmoid;
+                    up[j] = sumUp;
                 }
-                // Swish関数 (SiLU): x * sigmoid(x)
-                double sigmoid = 1.0 / (1.0 + Math.exp(-sum));
-                gate[j] = sum * sigmoid;
-            }
 
-            // ステップ2: Up Projection (特徴量の抽出)
-            double[] up = new double[dHidden];
-            for (int j = 0; j < dHidden; j++) {
-                double sum = 0.0;
-                for (int k = 0; k < dModel; k++) {
-                    sum += attentionOutput[i][k] * wUp[k][j];
+                for (int j = 0; j < dHidden; j++) {
+                    gatedValue[j] = gate[j] * up[j];
                 }
-                up[j] = sum;
-            }
 
-            // ステップ3: Hadamard Product (ゲートとアップの要素ごとの掛け算)
-            double[] gatedValue = new double[dHidden];
-            for (int j = 0; j < dHidden; j++) {
-                gatedValue[j] = gate[j] * up[j];
-            }
-
-            // ステップ4: Down Projection (元の dModel 次元へ圧縮)
-            for (int j = 0; j < dModel; j++) {
-                double sum = 0.0;
-                for (int k = 0; k < dHidden; k++) {
-                    sum += gatedValue[k] * wDown[k][j];
+                // ★ ここを dHidden から dModel に修正！
+                for (int j = 0; j < dModel; j++) {
+                    double sum = 0.0;
+                    for (int k = 0; k < dHidden; k++) {
+                        sum += gatedValue[k] * wDown[k][j];
+                    }
+                    ffnOutput[i][j] = sum;
                 }
-                ffnOutput[i][j] = sum; // これが本物のSwiGLUを通った強力なベクトル！
-            }
-        }
+            });
 
 // 13. 最終出力層 ＆ 全位置（Causal LM）の損失計算
+            int numPredictions = seqLen - 1;
 
-        double totalLoss = 0.0;
-        int numPredictions = seqLen - 1; // 4箇所（各位置で次の文字を予測）
+// mapToDouble と sum() を使うことで、totalLoss への足し算を安全に並列処理できます！
+            double totalLoss = IntStream.range(0, numPredictions).parallel().mapToDouble(i -> {
+                int targetId = encoded[i + 1]; // 位置 i の次に来るべき文字のID
 
-        for (int i = 0; i < numPredictions; i++) {
-            int targetId = encoded[i + 1]; // 位置 i の次に来るべき文字のID
-
-            // ロジット計算
-            double[] logits = new double[vocabSizeLocal];
-            for (int j = 0; j < vocabSizeLocal; j++) {
-                double sum = 0.0;
-                for (int k = 0; k < dModel; k++) {
-                    sum += ffnOutput[i][k] * wOut[k][j];
+                // ロジット計算
+                double[] logits = new double[vocabSizeLocal];
+                for (int j = 0; j < vocabSizeLocal; j++) {
+                    double sum = 0.0;
+                    for (int k = 0; k < dModel; k++) {
+                        sum += ffnOutput[i][k] * wOut[k][j];
+                    }
+                    logits[j] = sum;
                 }
-                logits[j] = sum;
-            }
 
-            // オーバーフロー防止
-            double maxLogit = logits[0];
-            for (int j = 1; j < vocabSizeLocal; j++) {
-                if (logits[j] > maxLogit) maxLogit = logits[j];
-            }
+                // オーバーフロー防止
+                double maxLogit = logits[0];
+                for (int j = 1; j < vocabSizeLocal; j++) {
+                    if (logits[j] > maxLogit) maxLogit = logits[j];
+                }
 
-            // Log-Sum-Expトリックでクロスエントロピー損失を計算
-            double targetLogit = logits[targetId];
-            double logSumExp = 0.0;
-            for (int j = 0; j < vocabSizeLocal; j++) {
-                logSumExp += Math.exp(logits[j] - maxLogit);
-            }
-            double logNormalizer = maxLogit + Math.log(logSumExp);
+                // Log-Sum-Expトリックでクロスエントロピー損失を計算
+                double targetLogit = logits[targetId];
+                double logSumExp = 0.0;
+                for (int j = 0; j < vocabSizeLocal; j++) {
+                    logSumExp += Math.exp(logits[j] - maxLogit);
+                }
+                double logNormalizer = maxLogit + Math.log(logSumExp);
 
-            double positionLoss = -(targetLogit - logNormalizer);
-            totalLoss += positionLoss;
-        }
+                double positionLoss = -(targetLogit - logNormalizer);
 
-        double finalLoss = totalLoss / numPredictions; // 平均損失
+                // 各位置の損失を返す（自動で最後に全部足し合わされます）
+                return positionLoss;
+            }).sum();
 
+            double finalLoss = totalLoss / numPredictions; // 平均損失
 // ==========================================
 // 14. 逆伝播（Backpropagation）の完全実装
 // ==========================================
@@ -424,9 +424,7 @@ public class Main {
 
             // Softmax + Cross-Entropy の勾配 (dLogits = probabilities - one_hot)
             double[] dLogits = new double[vocabSizeLocal];
-            for (int j = 0; j < vocabSizeLocal; j++) {
-                dLogits[j] = probs[j];
-            }
+            if (vocabSizeLocal >= 0) System.arraycopy(probs, 0, dLogits, 0, vocabSizeLocal);
             dLogits[targetId] -= 1.0;
 
             // wOut の勾配蓄積 ＆ ffnOutput への勾配の逆伝播
@@ -728,7 +726,7 @@ public class Main {
 
             System.out.print("入力: " + userInput + "  生成結果: " + userInput);
 
-            for (int step = 0; step < 4; step++) { // 残りの4文字分ループする
+            for (int step = 0; step < 30; step++) { // 残りの4文字分ループする
                 int seqLen = genEncoded.length;
 
 // 4. IDの配列から、16次元の座標を引っ張り出す（Embedding Lookup）
