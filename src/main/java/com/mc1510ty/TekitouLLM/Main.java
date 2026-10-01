@@ -13,11 +13,13 @@ public class Main {
 
         // 1. 複数の会話パターン（データセット）を用意する
         String[] dataset = {
-                "こんにちは、良い天気ですね。",
-                "おはようございます、今朝は何時に起きましたか？",
-                "こんばんは、月がきれいですね。",
-                "場面にあった対応をすることが大事です。",
-                "何か問題が起きたときは、すぐに言ってください。"
+                "U:こんにちは>A:こんにちは、良い天気ですね。■",
+                "U:おはよう>A:おはようございます、今朝は何時に起きましたか？■",
+                "U:こんばんは>A:こんばんは、月がきれいですね。■",
+                "U:天気は？>A:今日は雨予想ですね。■",
+                "U:眠いな>A:今朝はよく眠れましたか？時間があればお昼寝をしたりするのも手です。■",
+                "U:明日も学校かぁ>A:毎日毎日、同じ日々の繰り返しで大変ですよね。睡眠時間をしっかり取るとまだましになるはずです。■",
+                "U:LLMって何？>A:LLMとは、簡単に言うと現代の会話できるAIのことです。"
         };
 
         // 2. すべてのテキストから文字を集めて辞書を作る
@@ -39,7 +41,7 @@ public class Main {
         }
 
         int vocabSize = charToId.size();
-        int vectorSize = 64;
+        int vectorSize = 32;
         int dModel = vectorSize;
         int dHidden = dModel * 2;
         int vocabSizeLocal = charToId.size();
@@ -53,7 +55,7 @@ public class Main {
         }
 
         // 学習設定
-        int epochs = 10000;
+        int epochs = 5000;
         double learningRate = 0.0005;
         int numLayers = 4;
 
@@ -648,15 +650,19 @@ public class Main {
             System.out.print("AIへの入力文字をどうぞ: ");
             String userInput = scanner.nextLine();
 
-            int[] genEncoded = new int[userInput.length()];
-            for (int i = 0; i < userInput.length(); i++) {
-                char c = userInput.charAt(i);
+            // AIへのプロンプト（質問）の形を作る
+            String prompt = "U:" + userInput + ">A:";
+
+            int[] genEncoded = new int[prompt.length()];
+            for (int i = 0; i < prompt.length(); i++) {
+                char c = prompt.charAt(i);
                 genEncoded[i] = charToId.getOrDefault(c, 0);
             }
 
-            System.out.print("入力: " + userInput + "  生成結果: " + userInput);
+            System.out.print("入力: " + userInput + "  生成結果: " + prompt);
 
-            for (int step = 0; step < 30; step++) {
+
+            for (int step = 0; step < 100; step++) {
                 int genSeqLen = genEncoded.length;
 
                 for (int i = 0; i < genSeqLen; i++) {
@@ -777,16 +783,48 @@ public class Main {
                     logits[j] = sum;
                 }
 
-                int bestNextId = 0;
-                double maxLogitVal = logits[0];
+// 温度パラメータ（小さいほど、確率が高いものに厳しくなる。例: 0.7）
+                double temperature = 0.7;
+
+                double[] probs = new double[vocabSizeLocal];
+                double sumExp = 0.0;
+                double maxLogit = logits[0];
                 for (int j = 1; j < vocabSizeLocal; j++) {
-                    if (logits[j] > maxLogitVal) {
-                        maxLogitVal = logits[j];
+                    if (logits[j] > maxLogit) {
+                        maxLogit = logits[j];
+                    }
+                }
+
+// logitsをtemperatureで割ることで、確率のメリハリを強める
+                for (int j = 0; j < vocabSizeLocal; j++) {
+                    probs[j] = Math.exp((logits[j] - maxLogit) / temperature);
+                    sumExp += probs[j];
+                }
+
+                for (int j = 0; j < vocabSizeLocal; j++) {
+                    probs[j] /= sumExp;
+                }
+
+// 2. 確率のルーレットでランダムに次の文字を選ぶ
+                double r = random.nextDouble(); // 0.0 から 1.0 未満のランダムな値
+                double cumulative = 0.0;
+                int bestNextId = 0;
+
+                for (int j = 0; j < vocabSizeLocal; j++) {
+                    cumulative += probs[j];
+                    if (r <= cumulative) {
                         bestNextId = j;
+                        break;
                     }
                 }
 
                 char predictedChar = idToChar.get(bestNextId);
+
+                //終了文字
+                if (predictedChar == '■') {
+                    break;
+                }
+
                 System.out.print(predictedChar);
 
                 int[] nextGenEncoded = new int[genSeqLen + 1];
