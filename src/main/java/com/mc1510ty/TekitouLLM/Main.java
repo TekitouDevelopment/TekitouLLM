@@ -4,7 +4,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Random;
 import java.util.Scanner;
-import java.util.stream.IntStream;
 
 public class Main {
     static void main() {
@@ -14,7 +13,11 @@ public class Main {
 
         // 1. 複数の会話パターン（データセット）を用意する
         String[] dataset = {
-                "こんにちは"
+                "こんにちは、良い天気ですね。",
+                "おはようございます、今朝は何時に起きましたか？",
+                "こんばんは、月がきれいですね。",
+                "場面にあった対応をすることが大事です。",
+                "何か問題が起きたときは、すぐに言ってください。"
         };
 
         // 2. すべてのテキストから文字を集めて辞書を作る
@@ -22,7 +25,6 @@ public class Main {
         HashMap<Integer, Character> idToChar = new HashMap<>();
 
         java.util.List<Character> uniqueChars = java.util.Arrays.stream(dataset)
-                .parallel()
                 .flatMapToInt(String::chars)
                 .mapToObj(c -> (char) c)
                 .distinct()
@@ -49,18 +51,14 @@ public class Main {
                 embeddingTable[i][j] = (random.nextDouble() - 0.5);
             }
         }
-// 学習設定
-        int epochs = 100000;
+
+        // 学習設定
+        int epochs = 10000;
         double learningRate = 0.0005;
-        int numLayers = 2; // ★ レイヤー数をここで指定します
+        int numLayers = 4;
 
-        // ==========================================
-        // ★【一気に事前確保する配列たち（ループ外・最上部）】
-        // ==========================================
-        // 最大想定シーケンス長（今回の「こんにちは」は5文字なので余裕を持って32などに設定）
-        int maxSeqLen = 32;
+        int maxSeqLen = 512;
 
-        // パラメータ・勾配用の配列（多層対応のため、先頭に numLayers を追加）
         double[][] dWOut   = new double[vectorSize][vocabSize];
         double[][][] dWGate  = new double[numLayers][vectorSize][vectorSize * 2];
         double[][][] dWUp    = new double[numLayers][vectorSize][vectorSize * 2];
@@ -78,7 +76,7 @@ public class Main {
         double[][][] wDown = new double[numLayers][dHidden][dModel];
         double[][] wOut  = new double[dModel][vocabSizeLocal];
 
-        // 重みのランダム初期化（レイヤーごとのループに拡張）
+        // 重みのランダム初期化
         for (int l = 0; l < numLayers; l++) {
             for (int i = 0; i < dModel; i++) {
                 for (int j = 0; j < dModel; j++) {
@@ -105,7 +103,6 @@ public class Main {
             }
         }
 
-        // 学習時の使い回し用ワークスペース（多層対応）
         double[] invFreq = new double[vectorSize];
         for (int j = 0; j < vectorSize; j++) {
             double exponent = (double) (2 * (j / 2)) / vectorSize;
@@ -114,7 +111,6 @@ public class Main {
 
         double[][] inputEmbeddings = new double[maxSeqLen][vectorSize];
 
-        // 各レイヤーの計算結果を保持できるよう 3 次元に変更
         double[][][] query = new double[numLayers][maxSeqLen][dModel];
         double[][][] key = new double[numLayers][maxSeqLen][dModel];
         double[][][] value = new double[numLayers][maxSeqLen][dModel];
@@ -132,7 +128,6 @@ public class Main {
         double[][][] dKey = new double[numLayers][maxSeqLen][dModel];
         double[][] dInputEmbeddings = new double[maxSeqLen][dModel];
 
-
         System.out.println("=== 学習開始 ===");
 
         for (int epoch = 0; epoch < epochs; epoch++) {
@@ -147,13 +142,14 @@ public class Main {
 
             // 勾配配列のゼロクリア
             for (double[] row : dWOut)   Arrays.fill(row, 0.0);
-            for (double[] row : dWGate)  Arrays.fill(row, 0.0);
-            for (double[] row : dWUp)    Arrays.fill(row, 0.0);
-            for (double[] row : dWDown)  Arrays.fill(row, 0.0);
-            for (double[] row : dWq)     Arrays.fill(row, 0.0);
-            for (double[] row : dWk)     Arrays.fill(row, 0.0);
-            for (double[] row : dWv)     Arrays.fill(row, 0.0);
             for (double[] row : dEmbeddingTable) Arrays.fill(row, 0.0);
+
+            for (double[][] matrix : dWGate)  for (double[] row : matrix) Arrays.fill(row, 0.0);
+            for (double[][] matrix : dWUp)    for (double[] row : matrix) Arrays.fill(row, 0.0);
+            for (double[][] matrix : dWDown)  for (double[] row : matrix) Arrays.fill(row, 0.0);
+            for (double[][] matrix : dWq)     for (double[] row : matrix) Arrays.fill(row, 0.0);
+            for (double[][] matrix : dWk)     for (double[] row : matrix) Arrays.fill(row, 0.0);
+            for (double[][] matrix : dWv)     for (double[] row : matrix) Arrays.fill(row, 0.0);
 
             // 4. Embedding Lookup
             for (int i = 0; i < seqLen; i++) {
@@ -173,128 +169,135 @@ public class Main {
                 }
             }
 
-            // 6. Query (Q) の作成
-            IntStream.range(0, seqLen).parallel().forEach(i -> {
-                for (int j = 0; j < dModel; j++) {
-                    double sum = 0.0;
-                    for (int k = 0; k < dModel; k++) {
-                        sum += inputEmbeddings[i][k] * wq[k][j];
-                    }
-                    query[i][j] = sum;
-                }
-            });
+            // --- 順伝播 ---
+            for (int l = 0; l < numLayers; l++) {
+                final int layer = l;
+                double[][] currentLayerInput = (layer == 0) ? inputEmbeddings : ffnOutput[layer - 1];
 
-            // 7. Key (K) の作成
-            IntStream.range(0, seqLen).parallel().forEach(i -> {
-                for (int j = 0; j < dModel; j++) {
-                    double sum = 0.0;
-                    for (int k = 0; k < dModel; k++) {
-                        sum += inputEmbeddings[i][k] * wk[k][j];
+                // 6. Query (Q)
+                for (int i = 0; i < seqLen; i++) {
+                    for (int j = 0; j < dModel; j++) {
+                        double sum = 0.0;
+                        for (int k = 0; k < dModel; k++) {
+                            sum += currentLayerInput[i][k] * wq[layer][k][j];
+                        }
+                        query[layer][i][j] = sum;
                     }
-                    key[i][j] = sum;
                 }
-            });
 
-            // 8. Value (V) の作成
-            IntStream.range(0, seqLen).parallel().forEach(i -> {
-                for (int j = 0; j < dModel; j++) {
-                    double sum = 0.0;
-                    for (int k = 0; k < dModel; k++) {
-                        sum += inputEmbeddings[i][k] * wv[k][j];
+                // 7. Key (K)
+                for (int i = 0; i < seqLen; i++) {
+                    for (int j = 0; j < dModel; j++) {
+                        double sum = 0.0;
+                        for (int k = 0; k < dModel; k++) {
+                            sum += currentLayerInput[i][k] * wk[layer][k][j];
+                        }
+                        key[layer][i][j] = sum;
                     }
-                    value[i][j] = sum;
                 }
-            });
 
-            // 9. Causal Mask 付き Self-Attention スコア計算
-            double scale = Math.sqrt(dModel);
-            for (int i = 0; i < seqLen; i++) {
-                Arrays.fill(attentionScores[i], 0, seqLen, -1e9);
-                for (int j = 0; j <= i; j++) {
-                    double dotProduct = 0.0;
-                    for (int k = 0; k < dModel; k++) {
-                        dotProduct += query[i][k] * key[j][k];
+                // 8. Value (V)
+                for (int i = 0; i < seqLen; i++) {
+                    for (int j = 0; j < dModel; j++) {
+                        double sum = 0.0;
+                        for (int k = 0; k < dModel; k++) {
+                            sum += currentLayerInput[i][k] * wv[layer][k][j];
+                        }
+                        value[layer][i][j] = sum;
                     }
-                    attentionScores[i][j] = dotProduct / scale;
+                }
+
+                // 9. Causal Mask 付き Attention スコア
+                double scale = Math.sqrt(dModel);
+                for (int i = 0; i < seqLen; i++) {
+                    Arrays.fill(attentionScores[layer][i], 0, seqLen, -1e9);
+                    for (int j = 0; j <= i; j++) {
+                        double dotProduct = 0.0;
+                        for (int k = 0; k < dModel; k++) {
+                            dotProduct += query[layer][i][k] * key[layer][j][k];
+                        }
+                        attentionScores[layer][i][j] = dotProduct / scale;
+                    }
+                }
+
+                // 10. Softmax
+                for (int i = 0; i < seqLen; i++) {
+                    double max = attentionScores[layer][i][0];
+                    for (int j = 1; j < seqLen; j++) {
+                        if (attentionScores[layer][i][j] > max) {
+                            max = attentionScores[layer][i][j];
+                        }
+                    }
+
+                    double sum = 0.0;
+                    double[] expRow = new double[seqLen];
+                    for (int j = 0; j < seqLen; j++) {
+                        expRow[j] = Math.exp(attentionScores[layer][i][j] - max);
+                        sum += expRow[j];
+                    }
+
+                    for (int j = 0; j < seqLen; j++) {
+                        attentionWeights[layer][i][j] = expRow[j] / sum;
+                    }
+                }
+
+                // 11. Attention Output (★ 残差接続: ＋ currentLayerInput)
+                for (int i = 0; i < seqLen; i++) {
+                    for (int j = 0; j < dModel; j++) {
+                        double weightedSum = 0.0;
+                        for (int k = 0; k < seqLen; k++) {
+                            weightedSum += attentionWeights[layer][i][k] * value[layer][k][j];
+                        }
+                        attentionOutput[layer][i][j] = weightedSum + currentLayerInput[i][j];
+                    }
+                }
+
+                // 12. SwiGLU FFN (★ 残差接続: ＋ attentionOutput)
+                for (int i = 0; i < seqLen; i++) {
+                    double[] gate = new double[dHidden];
+                    double[] up = new double[dHidden];
+                    double[] gatedValue = new double[dHidden];
+
+                    for (int j = 0; j < dHidden; j++) {
+                        double sumGate = 0.0;
+                        double sumUp = 0.0;
+
+                        for (int k = 0; k < dModel; k++) {
+                            double val = attentionOutput[layer][i][k];
+                            sumGate += val * wGate[layer][k][j];
+                            sumUp += val * wUp[layer][k][j];
+                        }
+
+                        double sigmoid = 1.0 / (1.0 + Math.exp(-sumGate));
+                        gate[j] = sumGate * sigmoid;
+                        up[j] = sumUp;
+                    }
+
+                    for (int j = 0; j < dHidden; j++) {
+                        gatedValue[j] = gate[j] * up[j];
+                    }
+
+                    for (int j = 0; j < dModel; j++) {
+                        double sum = 0.0;
+                        for (int k = 0; k < dHidden; k++) {
+                            sum += gatedValue[k] * wDown[layer][k][j];
+                        }
+                        ffnOutput[layer][i][j] = sum + attentionOutput[layer][i][j];
+                    }
                 }
             }
 
-            // 10. Softmax
-            IntStream.range(0, seqLen).parallel().forEach(i -> {
-                double max = attentionScores[i][0];
-                for (int j = 1; j < seqLen; j++) {
-                    if (attentionScores[i][j] > max) {
-                        max = attentionScores[i][j];
-                    }
-                }
-
-                double sum = 0.0;
-                double[] expRow = new double[seqLen];
-                for (int j = 0; j < seqLen; j++) {
-                    expRow[j] = Math.exp(attentionScores[i][j] - max);
-                    sum += expRow[j];
-                }
-
-                for (int j = 0; j < seqLen; j++) {
-                    attentionWeights[i][j] = expRow[j] / sum;
-                }
-            });
-
-            // 11. Attention Output
-            IntStream.range(0, seqLen).parallel().forEach(i -> {
-                for (int j = 0; j < dModel; j++) {
-                    double weightedSum = 0.0;
-                    for (int k = 0; k < seqLen; k++) {
-                        weightedSum += attentionWeights[i][k] * value[k][j];
-                    }
-                    attentionOutput[i][j] = weightedSum;
-                }
-            });
-
-            // 12. SwiGLU FFN
-            IntStream.range(0, seqLen).parallel().forEach(i -> {
-                double[] gate = new double[dHidden];
-                double[] up = new double[dHidden];
-                double[] gatedValue = new double[dHidden];
-
-                for (int j = 0; j < dHidden; j++) {
-                    double sumGate = 0.0;
-                    double sumUp = 0.0;
-
-                    for (int k = 0; k < dModel; k++) {
-                        double val = attentionOutput[i][k];
-                        sumGate += val * wGate[k][j];
-                        sumUp += val * wUp[k][j];
-                    }
-
-                    double sigmoid = 1.0 / (1.0 + Math.exp(-sumGate));
-                    gate[j] = sumGate * sigmoid;
-                    up[j] = sumUp;
-                }
-
-                for (int j = 0; j < dHidden; j++) {
-                    gatedValue[j] = gate[j] * up[j];
-                }
-
-                for (int j = 0; j < dModel; j++) {
-                    double sum = 0.0;
-                    for (int k = 0; k < dHidden; k++) {
-                        sum += gatedValue[k] * wDown[k][j];
-                    }
-                    ffnOutput[i][j] = sum;
-                }
-            });
-
             // 13. 損失計算
             int numPredictions = seqLen - 1;
-            double totalLoss = IntStream.range(0, numPredictions).parallel().mapToDouble(i -> {
+            double totalLoss = 0.0;
+            for (int i = 0; i < numPredictions; i++) {
                 int targetId = encoded[i + 1];
 
                 double[] logits = new double[vocabSizeLocal];
                 for (int j = 0; j < vocabSizeLocal; j++) {
                     double sum = 0.0;
                     for (int k = 0; k < dModel; k++) {
-                        sum += ffnOutput[i][k] * wOut[k][j];
+                        sum += ffnOutput[numLayers - 1][i][k] * wOut[k][j];
                     }
                     logits[j] = sum;
                 }
@@ -311,23 +314,27 @@ public class Main {
                 }
                 double logNormalizer = maxLogit + Math.log(logSumExp);
 
-                return -(targetLogit - logNormalizer);
-            }).sum();
+                totalLoss += -(targetLogit - logNormalizer);
+            }
 
             double finalLoss = totalLoss / numPredictions;
 
-            // 14. 逆伝播
-            for (int i = 0; i < seqLen; i++) {
-                Arrays.fill(dFfnOutput[i], 0.0);
-                Arrays.fill(dAttentionOutput[i], 0.0);
-                Arrays.fill(dQuery[i], 0.0);
-                Arrays.fill(dKey[i], 0.0);
-                Arrays.fill(dValue[i], 0.0);
-                Arrays.fill(dInputEmbeddings[i], 0.0);
+            // 14. 逆伝播ワークスペース初期化
+            for (int l = 0; l < numLayers; l++) {
+                for (int i = 0; i < seqLen; i++) {
+                    Arrays.fill(dFfnOutput[l][i], 0.0);
+                    Arrays.fill(dAttentionOutput[l][i], 0.0);
+                    Arrays.fill(dQuery[l][i], 0.0);
+                    Arrays.fill(dKey[l][i], 0.0);
+                    Arrays.fill(dValue[l][i], 0.0);
+                }
+                for (int i = 0; i < seqLen; i++) {
+                    Arrays.fill(dAttentionWeights[l][i], 0.0);
+                    Arrays.fill(dAttentionScores[l][i], 0.0);
+                }
             }
             for (int i = 0; i < seqLen; i++) {
-                Arrays.fill(dAttentionWeights[i], 0.0);
-                Arrays.fill(dAttentionScores[i], 0.0);
+                Arrays.fill(dInputEmbeddings[i], 0.0);
             }
 
             // --- [A] 出力層の逆伝播 ---
@@ -338,7 +345,7 @@ public class Main {
                 for (int j = 0; j < vocabSizeLocal; j++) {
                     double sum = 0.0;
                     for (int k = 0; k < dModel; k++) {
-                        sum += ffnOutput[i][k] * wOut[k][j];
+                        sum += ffnOutput[numLayers - 1][i][k] * wOut[k][j];
                     }
                     logits[j] = sum;
                 }
@@ -364,209 +371,254 @@ public class Main {
 
                 for (int k = 0; k < dModel; k++) {
                     for (int j = 0; j < vocabSizeLocal; j++) {
-                        dWOut[k][j] += ffnOutput[i][k] * dLogits[j];
+                        dWOut[k][j] += ffnOutput[numLayers - 1][i][k] * dLogits[j];
                     }
                     double gradSum = 0.0;
                     for (int j = 0; j < vocabSizeLocal; j++) {
                         gradSum += dLogits[j] * wOut[k][j];
                     }
-                    dFfnOutput[i][k] += gradSum;
+                    dFfnOutput[numLayers - 1][i][k] += gradSum;
                 }
             }
 
-            // --- [B] FFN層の逆伝播 ---
-            for (int i = 0; i < seqLen; i++) {
-                double[] gate = new double[dHidden];
-                double[] up = new double[dHidden];
-                double[] sigmoidArr = new double[dHidden];
-                double[] sumGateArr = new double[dHidden];
+            // --- 逆伝播ループ (★ 残差接続による勾配のバイパスを追加) ---
+            for (int l = numLayers - 1; l >= 0; l--) {
+                double[][] currentLayerInput = (l == 0) ? inputEmbeddings : ffnOutput[l - 1];
 
-                for (int j = 0; j < dHidden; j++) {
-                    double sum = 0.0;
+                // FFNの残差接続による勾配のバイパス (dFfnOutput の勾配がそのまま AttentionOutput にも流れる)
+                for (int i = 0; i < seqLen; i++) {
                     for (int k = 0; k < dModel; k++) {
-                        sum += attentionOutput[i][k] * wGate[k][j];
+                        dAttentionOutput[l][i][k] += dFfnOutput[l][i][k];
                     }
-                    sumGateArr[j] = sum;
-                    double sigmoid = 1.0 / (1.0 + Math.exp(-sum));
-                    sigmoidArr[j] = sigmoid;
-                    gate[j] = sum * sigmoid;
                 }
 
-                for (int j = 0; j < dHidden; j++) {
-                    double sum = 0.0;
-                    for (int k = 0; k < dModel; k++) {
-                        sum += attentionOutput[i][k] * wUp[k][j];
+                // --- [B] FFN層の逆伝播 ---
+                for (int i = 0; i < seqLen; i++) {
+                    double[] gate = new double[dHidden];
+                    double[] up = new double[dHidden];
+                    double[] sigmoidArr = new double[dHidden];
+                    double[] sumGateArr = new double[dHidden];
+
+                    for (int j = 0; j < dHidden; j++) {
+                        double sum = 0.0;
+                        for (int k = 0; k < dModel; k++) {
+                            sum += attentionOutput[l][i][k] * wGate[l][k][j];
+                        }
+                        sumGateArr[j] = sum;
+                        double sigmoid = 1.0 / (1.0 + Math.exp(-sum));
+                        sigmoidArr[j] = sigmoid;
+                        gate[j] = sum * sigmoid;
                     }
-                    up[j] = sum;
+
+                    for (int j = 0; j < dHidden; j++) {
+                        double sum = 0.0;
+                        for (int k = 0; k < dModel; k++) {
+                            sum += attentionOutput[l][i][k] * wUp[l][k][j];
+                        }
+                        up[j] = sum;
+                    }
+
+                    double[] gatedValue = new double[dHidden];
+                    for (int j = 0; j < dHidden; j++) {
+                        gatedValue[j] = gate[j] * up[j];
+                    }
+
+                    double[] dGatedValue = new double[dHidden];
+                    for (int k = 0; k < dHidden; k++) {
+                        double sum = 0.0;
+                        for (int j = 0; j < dModel; j++) {
+                            sum += dFfnOutput[l][i][j] * wDown[l][k][j];
+                            dWDown[l][k][j] += gatedValue[k] * dFfnOutput[l][i][j];
+                        }
+                        dGatedValue[k] = sum;
+                    }
+
+                    double[] dGate = new double[dHidden];
+                    double[] dUp = new double[dHidden];
+                    for (int k = 0; k < dHidden; k++) {
+                        dGate[k] = dGatedValue[k] * up[k];
+                        dUp[k] = dGatedValue[k] * gate[k];
+                    }
+
+                    for (int j = 0; j < dHidden; j++) {
+                        double sum = sumGateArr[j];
+                        double s = sigmoidArr[j];
+                        double dSilu = s + (sum * s) * (1.0 - s);
+                        double dSumGate = dGate[j] * dSilu;
+
+                        for (int k = 0; k < dModel; k++) {
+                            dWGate[l][k][j] += attentionOutput[l][i][k] * dSumGate;
+                            dWUp[l][k][j]   += attentionOutput[l][i][k] * dUp[j];
+                        }
+                    }
                 }
 
-                double[] gatedValue = new double[dHidden];
-                for (int j = 0; j < dHidden; j++) {
-                    gatedValue[j] = gate[j] * up[j];
+                // --- [C] Attention層の逆伝播 ---
+                for (int i = 0; i < seqLen; i++) {
+                    double[] dGatedValue = new double[dHidden];
+                    for (int k = 0; k < dHidden; k++) {
+                        double sum = 0.0;
+                        for (int j = 0; j < dModel; j++) {
+                            sum += dFfnOutput[l][i][j] * wDown[l][k][j];
+                        }
+                        dGatedValue[k] = sum;
+                    }
+
+                    double[] gate = new double[dHidden];
+                    double[] up = new double[dHidden];
+                    double[] sigmoidArr = new double[dHidden];
+                    double[] sumGateArr = new double[dHidden];
+
+                    for (int j = 0; j < dHidden; j++) {
+                        double sum = 0.0;
+                        for (int k = 0; k < dModel; k++) {
+                            sum += attentionOutput[l][i][k] * wGate[l][k][j];
+                        }
+                        sumGateArr[j] = sum;
+                        double sigmoid = 1.0 / (1.0 + Math.exp(-sum));
+                        sigmoidArr[j] = sigmoid;
+                        gate[j] = sum * sigmoid;
+                    }
+                    for (int j = 0; j < dHidden; j++) {
+                        double sum = 0.0;
+                        for (int k = 0; k < dModel; k++) {
+                            sum += attentionOutput[l][i][k] * wUp[l][k][j];
+                        }
+                        up[j] = sum;
+                    }
+
+                    double[] dGate = new double[dHidden];
+                    double[] dUp = new double[dHidden];
+                    for (int k = 0; k < dHidden; k++) {
+                        dGate[k] = dGatedValue[k] * up[k];
+                        dUp[k] = dGatedValue[k] * gate[k];
+                    }
+
+                    for (int j = 0; j < dHidden; j++) {
+                        double sum = sumGateArr[j];
+                        double s = sigmoidArr[j];
+                        double dSilu = s + (sum * s) * (1.0 - s);
+                        double dSumGate = dGate[j] * dSilu;
+
+                        for (int k = 0; k < dModel; k++) {
+                            dAttentionOutput[l][i][k] += dSumGate * wGate[l][k][j] + dUp[j] * wUp[l][k][j];
+                        }
+                    }
                 }
 
-                double[] dGatedValue = new double[dHidden];
-                for (int k = 0; k < dHidden; k++) {
-                    double sum = 0.0;
+                for (int i = 0; i < seqLen; i++) {
                     for (int j = 0; j < dModel; j++) {
-                        sum += dFfnOutput[i][j] * wDown[k][j];
-                        dWDown[k][j] += gatedValue[k] * dFfnOutput[i][j];
+                        double gradOut = dAttentionOutput[l][i][j];
+                        for (int k = 0; k < seqLen; k++) {
+                            dAttentionWeights[l][i][k] += gradOut * value[l][k][j];
+                            dValue[l][k][j] += gradOut * attentionWeights[l][i][k];
+                        }
                     }
-                    dGatedValue[k] = sum;
                 }
 
-                double[] dGate = new double[dHidden];
-                double[] dUp = new double[dHidden];
-                for (int k = 0; k < dHidden; k++) {
-                    dGate[k] = dGatedValue[k] * up[k];
-                    dUp[k] = dGatedValue[k] * gate[k];
+                for (int i = 0; i < seqLen; i++) {
+                    double dotSum = 0.0;
+                    for (int k = 0; k < seqLen; k++) {
+                        dotSum += dAttentionWeights[l][i][k] * attentionWeights[l][i][k];
+                    }
+                    for (int j = 0; j < seqLen; j++) {
+                        double y_j = attentionWeights[l][i][j];
+                        dAttentionScores[l][i][j] = y_j * (dAttentionWeights[l][i][j] - dotSum);
+                    }
                 }
 
-                for (int j = 0; j < dHidden; j++) {
-                    double sum = sumGateArr[j];
-                    double s = sigmoidArr[j];
-                    double dSilu = s + (sum * s) * (1.0 - s);
-                    double dSumGate = dGate[j] * dSilu;
+                for (int i = 0; i < seqLen; i++) {
+                    for (int j = 0; j < seqLen; j++) {
+                        if (j > i) {
+                            dAttentionScores[l][i][j] = 0.0;
+                        }
+                    }
+                }
 
+                double scale = Math.sqrt(dModel);
+                for (int i = 0; i < seqLen; i++) {
+                    for (int j = 0; j < seqLen; j++) {
+                        double dScore = dAttentionScores[l][i][j] / scale;
+                        for (int k = 0; k < dModel; k++) {
+                            dQuery[l][i][k] += dScore * key[l][j][k];
+                            dKey[l][j][k]   += dScore * query[l][i][k];
+                        }
+                    }
+                }
+
+                // Attentionの残差接続による勾配のバイパス (dAttentionOutput の勾配がそのまま入力にも流れる)
+                for (int i = 0; i < seqLen; i++) {
                     for (int k = 0; k < dModel; k++) {
-                        dWGate[k][j] += attentionOutput[i][k] * dSumGate;
-                        dWUp[k][j]   += attentionOutput[i][k] * dUp[j];
+                        double gradOut = dAttentionOutput[l][i][k];
+                        if (l > 0) {
+                            dFfnOutput[l - 1][i][k] += gradOut;
+                        } else {
+                            dInputEmbeddings[i][k] += gradOut;
+                        }
+                    }
+                }
+
+                for (int i = 0; i < seqLen; i++) {
+                    for (int j = 0; j < dModel; j++) {
+                        double gQ = dQuery[l][i][j];
+                        double gV = dValue[l][i][j];
+
+                        for (int k = 0; k < dModel; k++) {
+                            dWq[l][k][j] += currentLayerInput[i][k] * gQ;
+                            dWv[l][k][j] += currentLayerInput[i][k] * gV;
+
+                            double gradInputVal = gQ * wq[l][k][j] + gV * wv[l][k][j];
+
+                            if (l > 0) {
+                                dFfnOutput[l - 1][i][k] += gradInputVal;
+                            } else {
+                                dInputEmbeddings[i][k] += gradInputVal;
+                            }
+                        }
+                    }
+                }
+
+                for (int j = 0; j < seqLen; j++) {
+                    for (int k = 0; k < dModel; k++) {
+                        double gK = dKey[l][j][k];
+                        for (int m = 0; m < dModel; m++) {
+                            dWk[l][m][k] += currentLayerInput[j][m] * gK;
+
+                            double gradInputValK = gK * wk[l][m][k];
+                            if (l > 0) {
+                                dFfnOutput[l - 1][j][m] += gradInputValK;
+                            } else {
+                                dInputEmbeddings[j][m] += gradInputValK;
+                            }
+                        }
                     }
                 }
             }
 
-            // パラメータ更新 (出力・FFN)
+            // パラメータ更新
             for (int i = 0; i < dModel; i++) {
                 for (int j = 0; j < vocabSizeLocal; j++) {
                     wOut[i][j] -= learningRate * dWOut[i][j];
                 }
             }
-            for (int i = 0; i < dModel; i++) {
-                for (int j = 0; j < dHidden; j++) {
-                    wGate[i][j] -= learningRate * dWGate[i][j];
-                    wUp[i][j]   -= learningRate * dWUp[i][j];
+            for (int l = 0; l < numLayers; l++) {
+                for (int i = 0; i < dModel; i++) {
+                    for (int j = 0; j < dHidden; j++) {
+                        wGate[l][i][j] -= learningRate * dWGate[l][i][j];
+                        wUp[l][i][j]   -= learningRate * dWUp[l][i][j];
+                    }
                 }
-            }
-            for (int i = 0; i < dHidden; i++) {
-                for (int j = 0; j < dModel; j++) {
-                    wDown[i][j] -= learningRate * dWDown[i][j];
-                }
-            }
-
-            // --- [C] Attention層の逆伝播 ---
-            for (int i = 0; i < seqLen; i++) {
-                double[] dGatedValue = new double[dHidden];
-                for (int k = 0; k < dHidden; k++) {
-                    double sum = 0.0;
+                for (int i = 0; i < dHidden; i++) {
                     for (int j = 0; j < dModel; j++) {
-                        sum += dFfnOutput[i][j] * wDown[k][j];
-                    }
-                    dGatedValue[k] = sum;
-                }
-
-                double[] gate = new double[dHidden];
-                double[] up = new double[dHidden];
-                double[] sigmoidArr = new double[dHidden];
-                double[] sumGateArr = new double[dHidden];
-
-                for (int j = 0; j < dHidden; j++) {
-                    double sum = 0.0;
-                    for (int k = 0; k < dModel; k++) {
-                        sum += attentionOutput[i][k] * wGate[k][j];
-                    }
-                    sumGateArr[j] = sum;
-                    double sigmoid = 1.0 / (1.0 + Math.exp(-sum));
-                    sigmoidArr[j] = sigmoid;
-                    gate[j] = sum * sigmoid;
-                }
-                for (int j = 0; j < dHidden; j++) {
-                    double sum = 0.0;
-                    for (int k = 0; k < dModel; k++) {
-                        sum += attentionOutput[i][k] * wUp[k][j];
-                    }
-                    up[j] = sum;
-                }
-
-                double[] dGate = new double[dHidden];
-                double[] dUp = new double[dHidden];
-                for (int k = 0; k < dHidden; k++) {
-                    dGate[k] = dGatedValue[k] * up[k];
-                    dUp[k] = dGatedValue[k] * gate[k];
-                }
-
-                for (int j = 0; j < dHidden; j++) {
-                    double sum = sumGateArr[j];
-                    double s = sigmoidArr[j];
-                    double dSilu = s + (sum * s) * (1.0 - s);
-                    double dSumGate = dGate[j] * dSilu;
-
-                    for (int k = 0; k < dModel; k++) {
-                        dAttentionOutput[i][k] += dSumGate * wGate[k][j] + dUp[j] * wUp[k][j];
+                        wDown[l][i][j] -= learningRate * dWDown[l][i][j];
                     }
                 }
-            }
-
-            for (int i = 0; i < seqLen; i++) {
-                for (int j = 0; j < dModel; j++) {
-                    double gradOut = dAttentionOutput[i][j];
-                    for (int k = 0; k < seqLen; k++) {
-                        dAttentionWeights[i][k] += gradOut * value[k][j];
-                        dValue[k][j] += gradOut * attentionWeights[i][k];
+                for (int i = 0; i < dModel; i++) {
+                    for (int j = 0; j < dModel; j++) {
+                        wq[l][i][j] -= learningRate * dWq[l][i][j];
+                        wk[l][i][j] -= learningRate * dWk[l][i][j];
+                        wv[l][i][j] -= learningRate * dWv[l][i][j];
                     }
-                }
-            }
-
-            for (int i = 0; i < seqLen; i++) {
-                double dotSum = 0.0;
-                for (int k = 0; k < seqLen; k++) {
-                    dotSum += dAttentionWeights[i][k] * attentionWeights[i][k];
-                }
-                for (int j = 0; j < seqLen; j++) {
-                    double y_j = attentionWeights[i][j];
-                    dAttentionScores[i][j] = y_j * (dAttentionWeights[i][j] - dotSum);
-                }
-            }
-
-            for (int i = 0; i < seqLen; i++) {
-                for (int j = 0; j < seqLen; j++) {
-                    if (j > i) {
-                        dAttentionScores[i][j] = 0.0;
-                    }
-                }
-            }
-
-            scale = Math.sqrt(dModel);
-            for (int i = 0; i < seqLen; i++) {
-                for (int j = 0; j < seqLen; j++) {
-                    double dScore = dAttentionScores[i][j] / scale;
-                    for (int k = 0; k < dModel; k++) {
-                        dQuery[i][k] += dScore * key[j][k];
-                        dKey[j][k]   += dScore * query[i][k];
-                    }
-                }
-            }
-
-            for (int i = 0; i < seqLen; i++) {
-                for (int j = 0; j < dModel; j++) {
-                    double gQ = dQuery[i][j];
-                    double gK = dKey[i][j];
-                    double gV = dValue[i][j];
-
-                    for (int k = 0; k < dModel; k++) {
-                        dWq[k][j] += inputEmbeddings[i][k] * gQ;
-                        dWk[k][j] += inputEmbeddings[i][k] * gK;
-                        dWv[k][j] += inputEmbeddings[i][k] * gV;
-
-                        dInputEmbeddings[i][k] += gQ * wq[k][j] + gK * wk[k][j] + gV * wv[k][j];
-                    }
-                }
-            }
-
-            for (int i = 0; i < dModel; i++) {
-                for (int j = 0; j < dModel; j++) {
-                    wq[i][j] -= learningRate * dWq[i][j];
-                    wk[i][j] -= learningRate * dWk[i][j];
-                    wv[i][j] -= learningRate * dWv[i][j];
                 }
             }
 
@@ -588,6 +640,7 @@ public class Main {
             }
         }
 
+        // 推論テスト部分はそのまま
         System.out.println("\n=== 対話・文字生成テスト ===");
         Scanner scanner = new Scanner(System.in);
 
@@ -622,112 +675,95 @@ public class Main {
                     }
                 }
 
-                for (int i = 0; i < genSeqLen; i++) {
-                    for (int j = 0; j < dModel; j++) {
-                        double sum = 0.0;
-                        for (int k = 0; k < dModel; k++) {
-                            sum += inputEmbeddings[i][k] * wq[k][j];
-                        }
-                        query[i][j] = sum;
-                    }
-                }
+                for (int l = 0; l < numLayers; l++) {
+                    double[][] currentLayerInput = (l == 0) ? inputEmbeddings : ffnOutput[l - 1];
 
-                for (int i = 0; i < genSeqLen; i++) {
-                    for (int j = 0; j < dModel; j++) {
-                        double sum = 0.0;
-                        for (int k = 0; k < dModel; k++) {
-                            sum += inputEmbeddings[i][k] * wk[k][j];
-                        }
-                        key[i][j] = sum;
-                    }
-                }
-
-                for (int i = 0; i < genSeqLen; i++) {
-                    for (int j = 0; j < dModel; j++) {
-                        double sum = 0.0;
-                        for (int k = 0; k < dModel; k++) {
-                            sum += inputEmbeddings[i][k] * wv[k][j];
-                        }
-                        value[i][j] = sum;
-                    }
-                }
-
-                double scale = Math.sqrt(dModel);
-                for (int i = 0; i < genSeqLen; i++) {
-                    for (int j = 0; j < genSeqLen; j++) {
-                        if (j > i) {
-                            attentionScores[i][j] = -1e9;
-                        } else {
-                            double dotProduct = 0.0;
+                    for (int i = 0; i < genSeqLen; i++) {
+                        for (int j = 0; j < dModel; j++) {
+                            double sumQ = 0.0, sumK = 0.0, sumV = 0.0;
                             for (int k = 0; k < dModel; k++) {
-                                dotProduct += query[i][k] * key[j][k];
+                                sumQ += currentLayerInput[i][k] * wq[l][k][j];
+                                sumK += currentLayerInput[i][k] * wk[l][k][j];
+                                sumV += currentLayerInput[i][k] * wv[l][k][j];
                             }
-                            attentionScores[i][j] = dotProduct / scale;
-                        }
-                    }
-                }
-
-                for (int i = 0; i < genSeqLen; i++) {
-                    double max = attentionScores[i][0];
-                    for (int j = 1; j < genSeqLen; j++) {
-                        if (attentionScores[i][j] > max) {
-                            max = attentionScores[i][j];
+                            query[l][i][j] = sumQ;
+                            key[l][i][j] = sumK;
+                            value[l][i][j] = sumV;
                         }
                     }
 
-                    double sum = 0.0;
-                    double[] expRow = new double[genSeqLen];
-                    for (int j = 0; j < genSeqLen; j++) {
-                        expRow[j] = Math.exp(attentionScores[i][j] - max);
-                        sum += expRow[j];
-                    }
-
-                    for (int j = 0; j < genSeqLen; j++) {
-                        attentionWeights[i][j] = expRow[j] / sum;
-                    }
-                }
-
-                for (int i = 0; i < genSeqLen; i++) {
-                    for (int j = 0; j < dModel; j++) {
-                        double weightedSum = 0.0;
-                        for (int k = 0; k < genSeqLen; k++) {
-                            weightedSum += attentionWeights[i][k] * value[k][j];
+                    double scale = Math.sqrt(dModel);
+                    for (int i = 0; i < genSeqLen; i++) {
+                        for (int j = 0; j < genSeqLen; j++) {
+                            if (j > i) {
+                                attentionScores[l][i][j] = -1e9;
+                            } else {
+                                double dotProduct = 0.0;
+                                for (int k = 0; k < dModel; k++) {
+                                    dotProduct += query[l][i][k] * key[l][j][k];
+                                }
+                                attentionScores[l][i][j] = dotProduct / scale;
+                            }
                         }
-                        attentionOutput[i][j] = weightedSum;
                     }
-                }
 
-                for (int i = 0; i < genSeqLen; i++) {
-                    double[] gate = new double[dHidden];
-                    for (int j = 0; j < dHidden; j++) {
+                    for (int i = 0; i < genSeqLen; i++) {
+                        double max = attentionScores[l][i][0];
+                        for (int j = 1; j < genSeqLen; j++) {
+                            if (attentionScores[l][i][j] > max) {
+                                max = attentionScores[l][i][j];
+                            }
+                        }
+
                         double sum = 0.0;
-                        for (int k = 0; k < dModel; k++) {
-                            sum += attentionOutput[i][k] * wGate[k][j];
+                        double[] expRow = new double[genSeqLen];
+                        for (int j = 0; j < genSeqLen; j++) {
+                            expRow[j] = Math.exp(attentionScores[l][i][j] - max);
+                            sum += expRow[j];
                         }
-                        double sigmoid = 1.0 / (1.0 + Math.exp(-sum));
-                        gate[j] = sum * sigmoid;
+
+                        for (int j = 0; j < genSeqLen; j++) {
+                            attentionWeights[l][i][j] = expRow[j] / sum;
+                        }
                     }
 
-                    double[] up = new double[dHidden];
-                    for (int j = 0; j < dHidden; j++) {
-                        double sum = 0.0;
-                        for (int k = 0; k < dModel; k++) {
-                            sum += attentionOutput[i][k] * wUp[k][j];
+                    for (int i = 0; i < genSeqLen; i++) {
+                        for (int j = 0; j < dModel; j++) {
+                            double weightedSum = 0.0;
+                            for (int k = 0; k < genSeqLen; k++) {
+                                weightedSum += attentionWeights[l][i][k] * value[l][k][j];
+                            }
+                            attentionOutput[l][i][j] = weightedSum + currentLayerInput[i][j];
                         }
-                        up[j] = sum;
                     }
 
-                    double[] gatedValue = new double[dHidden];
-                    for (int j = 0; j < dHidden; j++) {
-                        gatedValue[j] = gate[j] * up[j];
-                    }
-
-                    for (int j = 0; j < dModel; j++) {
-                        double sum = 0.0;
-                        for (int k = 0; k < dHidden; k++) {
-                            sum += gatedValue[k] * wDown[k][j];
+                    for (int i = 0; i < genSeqLen; i++) {
+                        double[] gate = new double[dHidden];
+                        double[] up = new double[dHidden];
+                        for (int j = 0; j < dHidden; j++) {
+                            double sumGate = 0.0, sumUp = 0.0;
+                            for (int k = 0; k < dModel; k++) {
+                                double val = attentionOutput[l][i][k];
+                                sumGate += val * wGate[l][k][j];
+                                sumUp += val * wUp[l][k][j];
+                            }
+                            double sigmoid = 1.0 / (1.0 + Math.exp(-sumGate));
+                            gate[j] = sumGate * sigmoid;
+                            up[j] = sumUp;
                         }
-                        ffnOutput[i][j] = sum;
+
+                        double[] gatedValue = new double[dHidden];
+                        for (int j = 0; j < dHidden; j++) {
+                            gatedValue[j] = gate[j] * up[j];
+                        }
+
+                        for (int j = 0; j < dModel; j++) {
+                            double sum = 0.0;
+                            for (int k = 0; k < dHidden; k++) {
+                                sum += gatedValue[k] * wDown[l][k][j];
+                            }
+                            ffnOutput[l][i][j] = sum + attentionOutput[l][i][j];
+                        }
                     }
                 }
 
@@ -736,7 +772,7 @@ public class Main {
                 for (int j = 0; j < vocabSizeLocal; j++) {
                     double sum = 0.0;
                     for (int k = 0; k < dModel; k++) {
-                        sum += ffnOutput[lastIdx][k] * wOut[k][j];
+                        sum += ffnOutput[numLayers - 1][lastIdx][k] * wOut[k][j];
                     }
                     logits[j] = sum;
                 }
