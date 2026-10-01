@@ -15,8 +15,7 @@ public class Main {
 
         // 1. 複数の会話パターン（データセット）を用意する
         String[] dataset = {
-                "あなたは、今日何時に起きましたか？",
-                "7時に起きました。"
+                "こんにちは"
         };
 
         // 2. すべてのテキストから文字を集めて辞書を作る
@@ -25,7 +24,7 @@ public class Main {
 
         // ステップ1: 【並列処理】dataset全体の文字スキャンと重複排除を全コアで爆速で行う！
         java.util.List<Character> uniqueChars = java.util.Arrays.stream(dataset)
-                .parallel() // 👈 ここで全CPUコアを使って一気に文字を回収！
+                .parallel()
                 .flatMapToInt(String::chars)
                 .mapToObj(c -> (char) c)
                 .distinct() // 重複を消す
@@ -695,7 +694,7 @@ public class Main {
             }
 
             // 100エポックごとに進捗を表示
-            if (epoch == 0 || (epoch + 1) % 100 == 0 || epoch == epochs - 1) {
+            if (epoch == 0 || (epoch + 1) % 500 == 0 || epoch == epochs - 1) {
                 System.out.println("Epoch [" + (epoch + 1) + "/" + epochs + "] - Loss: " + finalLoss);
             }
 
