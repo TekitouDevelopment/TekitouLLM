@@ -49,10 +49,10 @@ public class Main {
                 embeddingTable[i][j] = (random.nextDouble() - 0.5);
             }
         }
-
-        // 学習設定
+// 学習設定
         int epochs = 100000;
         double learningRate = 0.0005;
+        int numLayers = 2; // ★ レイヤー数をここで指定します
 
         // ==========================================
         // ★【一気に事前確保する配列たち（ループ外・最上部）】
@@ -60,41 +60,43 @@ public class Main {
         // 最大想定シーケンス長（今回の「こんにちは」は5文字なので余裕を持って32などに設定）
         int maxSeqLen = 32;
 
-        // パラメータ・勾配用の配列
+        // パラメータ・勾配用の配列（多層対応のため、先頭に numLayers を追加）
         double[][] dWOut   = new double[vectorSize][vocabSize];
-        double[][] dWGate  = new double[vectorSize][vectorSize * 2];
-        double[][] dWUp    = new double[vectorSize][vectorSize * 2];
-        double[][] dWDown  = new double[vectorSize * 2][vectorSize];
-        double[][] dWq     = new double[vectorSize][vectorSize];
-        double[][] dWk     = new double[vectorSize][vectorSize];
-        double[][] dWv     = new double[vectorSize][vectorSize];
+        double[][][] dWGate  = new double[numLayers][vectorSize][vectorSize * 2];
+        double[][][] dWUp    = new double[numLayers][vectorSize][vectorSize * 2];
+        double[][][] dWDown  = new double[numLayers][vectorSize * 2][vectorSize];
+        double[][][] dWq     = new double[numLayers][vectorSize][vectorSize];
+        double[][][] dWk     = new double[numLayers][vectorSize][vectorSize];
+        double[][][] dWv     = new double[numLayers][vectorSize][vectorSize];
         double[][] dEmbeddingTable = new double[vocabSize][vectorSize];
 
-        double[][] wq = new double[dModel][dModel];
-        double[][] wk = new double[dModel][dModel];
-        double[][] wv = new double[dModel][dModel];
-        double[][] wGate = new double[dModel][dHidden];
-        double[][] wUp   = new double[dModel][dHidden];
-        double[][] wDown = new double[dHidden][dModel];
+        double[][][] wq = new double[numLayers][dModel][dModel];
+        double[][][] wk = new double[numLayers][dModel][dModel];
+        double[][][] wv = new double[numLayers][dModel][dModel];
+        double[][][] wGate = new double[numLayers][dModel][dHidden];
+        double[][][] wUp   = new double[numLayers][dModel][dHidden];
+        double[][][] wDown = new double[numLayers][dHidden][dModel];
         double[][] wOut  = new double[dModel][vocabSizeLocal];
 
-        // 重みのランダム初期化
-        for (int i = 0; i < dModel; i++) {
-            for (int j = 0; j < dModel; j++) {
-                wq[i][j] = (random.nextDouble() - 0.5) * 0.1;
-                wk[i][j] = (random.nextDouble() - 0.5) * 0.1;
-                wv[i][j] = (random.nextDouble() - 0.5) * 0.1;
+        // 重みのランダム初期化（レイヤーごとのループに拡張）
+        for (int l = 0; l < numLayers; l++) {
+            for (int i = 0; i < dModel; i++) {
+                for (int j = 0; j < dModel; j++) {
+                    wq[l][i][j] = (random.nextDouble() - 0.5) * 0.1;
+                    wk[l][i][j] = (random.nextDouble() - 0.5) * 0.1;
+                    wv[l][i][j] = (random.nextDouble() - 0.5) * 0.1;
+                }
             }
-        }
-        for (int i = 0; i < dModel; i++) {
-            for (int j = 0; j < dHidden; j++) {
-                wGate[i][j] = (random.nextDouble() - 0.5) * 0.1;
-                wUp[i][j]   = (random.nextDouble() - 0.5) * 0.1;
+            for (int i = 0; i < dModel; i++) {
+                for (int j = 0; j < dHidden; j++) {
+                    wGate[l][i][j] = (random.nextDouble() - 0.5) * 0.1;
+                    wUp[l][i][j]   = (random.nextDouble() - 0.5) * 0.1;
+                }
             }
-        }
-        for (int i = 0; i < dHidden; i++) {
-            for (int j = 0; j < dModel; j++) {
-                wDown[i][j] = (random.nextDouble() - 0.5) * 0.1;
+            for (int i = 0; i < dHidden; i++) {
+                for (int j = 0; j < dModel; j++) {
+                    wDown[l][i][j] = (random.nextDouble() - 0.5) * 0.1;
+                }
             }
         }
         for (int i = 0; i < dModel; i++) {
@@ -103,7 +105,7 @@ public class Main {
             }
         }
 
-        // 学習時の使い回し用ワークスペース（最大サイズで事前確保）
+        // 学習時の使い回し用ワークスペース（多層対応）
         double[] invFreq = new double[vectorSize];
         for (int j = 0; j < vectorSize; j++) {
             double exponent = (double) (2 * (j / 2)) / vectorSize;
@@ -111,21 +113,23 @@ public class Main {
         }
 
         double[][] inputEmbeddings = new double[maxSeqLen][vectorSize];
-        double[][] query = new double[maxSeqLen][dModel];
-        double[][] key = new double[maxSeqLen][dModel];
-        double[][] value = new double[maxSeqLen][dModel];
-        double[][] attentionScores = new double[maxSeqLen][maxSeqLen];
-        double[][] attentionWeights = new double[maxSeqLen][maxSeqLen];
-        double[][] attentionOutput = new double[maxSeqLen][dModel];
-        double[][] ffnOutput = new double[maxSeqLen][dModel];
 
-        double[][] dFfnOutput = new double[maxSeqLen][dModel];
-        double[][] dAttentionOutput = new double[maxSeqLen][dModel];
-        double[][] dAttentionWeights = new double[maxSeqLen][maxSeqLen];
-        double[][] dValue = new double[maxSeqLen][dModel];
-        double[][] dAttentionScores = new double[maxSeqLen][maxSeqLen];
-        double[][] dQuery = new double[maxSeqLen][dModel];
-        double[][] dKey = new double[maxSeqLen][dModel];
+        // 各レイヤーの計算結果を保持できるよう 3 次元に変更
+        double[][][] query = new double[numLayers][maxSeqLen][dModel];
+        double[][][] key = new double[numLayers][maxSeqLen][dModel];
+        double[][][] value = new double[numLayers][maxSeqLen][dModel];
+        double[][][] attentionScores = new double[numLayers][maxSeqLen][maxSeqLen];
+        double[][][] attentionWeights = new double[numLayers][maxSeqLen][maxSeqLen];
+        double[][][] attentionOutput = new double[numLayers][maxSeqLen][dModel];
+        double[][][] ffnOutput = new double[numLayers][maxSeqLen][dModel];
+
+        double[][][] dFfnOutput = new double[numLayers][maxSeqLen][dModel];
+        double[][][] dAttentionOutput = new double[numLayers][maxSeqLen][dModel];
+        double[][][] dAttentionWeights = new double[numLayers][maxSeqLen][maxSeqLen];
+        double[][][] dValue = new double[numLayers][maxSeqLen][dModel];
+        double[][][] dAttentionScores = new double[numLayers][maxSeqLen][maxSeqLen];
+        double[][][] dQuery = new double[numLayers][maxSeqLen][dModel];
+        double[][][] dKey = new double[numLayers][maxSeqLen][dModel];
         double[][] dInputEmbeddings = new double[maxSeqLen][dModel];
 
 
