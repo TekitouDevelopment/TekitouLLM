@@ -3,9 +3,9 @@ package com.mc1510ty.TekitouLLM;
 import java.util.*;
 
 public class SimpleTokenizer {
-    private Map<String, Integer> tokenToId = new HashMap<>();
+    public Map<String, Integer> tokenToId = new HashMap<>();
     private Map<Integer, String> idToToken = new HashMap<>();
-    private List<String> merges = new ArrayList<>(); // マージした履歴（順番が重要！）
+    private List<String> merges = new ArrayList<>();
 
     private static final List<String> SPECIAL_TOKENS = Arrays.asList("U:", ">A:", "■");
 
@@ -15,14 +15,12 @@ public class SimpleTokenizer {
         idToToken.clear();
         merges.clear();
 
-        // 1. 特殊トークンを辞書に登録
         for (String st : SPECIAL_TOKENS) {
             tokenToId.put(st, id);
             idToToken.put(id, st);
             id++;
         }
 
-        // 2. 特殊トークン以外の文字をベースとして登録
         Set<Character> uniqueChars = new HashSet<>();
         for (String text : corpus) {
             String temp = text;
@@ -43,13 +41,11 @@ public class SimpleTokenizer {
             }
         }
 
-        // 3. コーパスを初期トークンリストに分解
         List<List<String>> splitCorpus = new ArrayList<>();
         for (String text : corpus) {
             splitCorpus.add(tokenizeInitial(text));
         }
 
-        // 4. BPEマージの実行
         while (tokenToId.size() < targetVocabSize) {
             Map<String, Integer> pairCounts = new HashMap<>();
 
@@ -84,23 +80,30 @@ public class SimpleTokenizer {
 
             String[] parts = bestPair.split("\u0001");
             String merged = parts[0] + parts[1];
-            merges.add(bestPair); // どの順番でマージしたかを記録！
+            merges.add(bestPair);
 
             if (!tokenToId.containsKey(merged)) {
                 tokenToId.put(merged, id);
                 idToToken.put(id, merged);
                 id++;
             } else {
-                break;
+                // すでに存在する場合はスキップして続行する
+                continue;
             }
 
-            for (List<String> tokens : splitCorpus) {
-                for (int i = 0; i < tokens.size() - 1; i++) {
-                    if (tokens.get(i).equals(parts[0]) && tokens.get(i + 1).equals(parts[1])) {
-                        tokens.set(i, merged);
-                        tokens.remove(i + 1);
+            // 安全なリスト再構築によるコーパスの置換
+            for (int cIdx = 0; cIdx < splitCorpus.size(); cIdx++) {
+                List<String> tokens = splitCorpus.get(cIdx);
+                List<String> newTokens = new ArrayList<>();
+                for (int i = 0; i < tokens.size(); i++) {
+                    if (i < tokens.size() - 1 && tokens.get(i).equals(parts[0]) && tokens.get(i + 1).equals(parts[1])) {
+                        newTokens.add(merged);
+                        i++;
+                    } else {
+                        newTokens.add(tokens.get(i));
                     }
                 }
+                splitCorpus.set(cIdx, newTokens);
             }
         }
 
@@ -128,11 +131,9 @@ public class SimpleTokenizer {
         return result;
     }
 
-    // ★【本格実装】学習済みの merges ルールを適用して正しくサブワードに分割する
     public List<Integer> encode(String text) {
         List<String> tokens = tokenizeInitial(text);
 
-        // 学習時に記録したマージルールを順番に適用していく
         for (String merge : merges) {
             String[] parts = merge.split("\u0001");
             String p1 = parts[0];
@@ -143,7 +144,7 @@ public class SimpleTokenizer {
             for (int i = 0; i < tokens.size(); i++) {
                 if (i < tokens.size() - 1 && tokens.get(i).equals(p1) && tokens.get(i + 1).equals(p2)) {
                     newTokens.add(merged);
-                    i++; // 次の要素をスキップ
+                    i++;
                 } else {
                     newTokens.add(tokens.get(i));
                 }
@@ -151,10 +152,9 @@ public class SimpleTokenizer {
             tokens = newTokens;
         }
 
-        // トークン文字列をIDに変換
         List<Integer> result = new ArrayList<>();
         for (String t : tokens) {
-            result.add(tokenToId.getOrDefault(t, 0)); // 辞書になければ0にフォールバック
+            result.add(tokenToId.getOrDefault(t, 0));
         }
         return result;
     }
@@ -174,5 +174,4 @@ public class SimpleTokenizer {
     public String decodeToken(int id) {
         return idToToken.getOrDefault(id, "");
     }
-
 }

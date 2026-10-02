@@ -18,48 +18,43 @@ public class Main {
                 "U:眠いな>A:今朝はよく眠れましたか？時間があればお昼寝をしたりするのも手です。■",
                 "U:明日も学校かぁ>A:毎日毎日、同じ日々の繰り返しで大変ですよね。睡眠時間をしっかり取るとまだましになるはずです。■",
                 "U:LLMって何？>A:LLMとは、簡単に言うと現代の会話できるAIのことです。■",
-                "U:Java(プログラミング言語)の名前の由来は何？>A:Java(プログラミング言語)の名前の由来は、開発チームが好んで飲んでいたインドネシア・ジャワ島のコーヒーに由来しています。Javaの歴史についてもっと知りたい場合は、他の質問もどんどん言ってください!■",
+                "U:Java言語の名前の由来は何？>A:Java(プログラミング言語)の名前の由来は、開発チームが好んで飲んでいたインドネシア・ジャワ島のコーヒーに由来しています。Javaの歴史についてもっと知りたい場合は、他の質問もどんどん言ってください!■",
                 "U:Javaの最新バージョンは？>A:Java(プログラミング言語)の最新LTSバージョンは、Java25の、'25.0.4.1'です。Java25では、クラス定義の簡略化や、IO.printlnが使用可能になるなど、より便利になりました。■",
                 "U:ls>A:lsは、LinuxやMacOSなどのターミナルで、ディレクトリやファイルの一覧を表示する基本コマンドです。■",
                 "U:桃太郎の桃が流れる音>A:'どんぶらこ'です。■",
                 "U:OpenGLの代替は？>A:主に'Vulkan'が挙げられます。Windows専用であれば、'DirectX'なども可能です。VulkanやDirectXについて質問がある場合は、なんでも言ってください！■",
                 "U:こんにちは>A:こんにちは！今日は何をしますか？■",
-                "U:こんばんは>A:こんばんは。今日は何がありましたか?■"
+                "U:こんばんは>A:こんばんは。今日は何がありましたか?■",
+                "U:Windowsの最新バージョン>A:Microsoft Windowsの2026年10月2日時点での最新バージョンは、2021年10月5日にリリースされた'Windows 11'です。■",
+                "U:BVE>A:'BVE'は、mackoy氏が主に個人で開発している、3DCGを用いたトレインシミュレーターのことです。最新バージョンは2020年9月23日にリリースされた、'BVE6'です。公式サイトのURLは、'https://bvets.net/'となっています。"
         };
 
 
         // 学習設定
         int epochs = 5000;
         double learningRate = 0.0005;
-        int numLayers = 4;
+        int numLayers = 8;
 
-        int maxSeqLen = 512;
+        int maxSeqLen = 2048;
 
 
         int vectorSize = 32;
 
-        // 2. すべてのテキストから文字を集めて辞書を作る
-        HashMap<Character, Integer> charToId = new HashMap<>();
-        HashMap<Integer, Character> idToChar = new HashMap<>();
+        // 2. BPEトークナイザーの初期化と学習
+        SimpleTokenizer tokenizer = new SimpleTokenizer();
+        // 例として、目標語彙サイズを320、最小頻度を2に設定して学習
+        tokenizer.train(dataset, 320, 2);
 
-        java.util.List<Character> uniqueChars = java.util.Arrays.stream(dataset)
-                .flatMapToInt(String::chars)
-                .mapToObj(c -> (char) c)
-                .distinct()
-                .sorted()
-                .collect(java.util.stream.Collectors.toList());
+        System.out.println("\n作成されたサブワード:");
+        tokenizer.tokenToId.entrySet().stream().forEach(entry -> {
+            System.out.println("  [" + entry.getValue() + "] " + entry.getKey());
+        });
 
-        int nextId = 0;
-        for (char c : uniqueChars) {
-            charToId.put(c, nextId);
-            idToChar.put(nextId, c);
-            nextId++;
-        }
 
-        int vocabSize = charToId.size();
+        int vocabSize = tokenizer.getVocabSize();
         int dModel = vectorSize;
         int dHidden = dModel * 2; //隠れ層は2倍
-        int vocabSizeLocal = charToId.size();
+        int vocabSizeLocal = vocabSize;
 
         // 3. 埋め込みテーブルの初期化
         double[][] embeddingTable = new double[vocabSize][vectorSize];
@@ -143,11 +138,14 @@ public class Main {
         for (int epoch = 0; epoch < epochs; epoch++) {
 
             String currentText = dataset[epoch % dataset.length];
-            int seqLen = currentText.length();
+
+            // BPEでエンコードしてトークンIDのリストを取得
+            List<Integer> encodedList = tokenizer.encode(currentText);
+            int seqLen = encodedList.size();
 
             int[] encoded = new int[seqLen];
             for (int i = 0; i < seqLen; i++) {
-                encoded[i] = charToId.get(currentText.charAt(i));
+                encoded[i] = encodedList.get(i);
             }
 
             // 勾配配列のゼロクリア
@@ -402,12 +400,12 @@ public class Main {
                     }
                 }
 
-                // --- [B] FFN層の逆伝播 ---
+                // --- [B] FFN層の逆伝播（パラメータの勾配と入力への勾配をここでまとめて計算） ---
                 for (int i = 0; i < seqLen; i++) {
+                    double[] sumGateArr = new double[dHidden];
+                    double[] sigmoidArr = new double[dHidden];
                     double[] gate = new double[dHidden];
                     double[] up = new double[dHidden];
-                    double[] sigmoidArr = new double[dHidden];
-                    double[] sumGateArr = new double[dHidden];
 
                     for (int j = 0; j < dHidden; j++) {
                         double sum = 0.0;
@@ -443,78 +441,26 @@ public class Main {
                         dGatedValue[k] = sum;
                     }
 
-                    double[] dGate = new double[dHidden];
-                    double[] dUp = new double[dHidden];
-                    for (int k = 0; k < dHidden; k++) {
-                        dGate[k] = dGatedValue[k] * up[k];
-                        dUp[k] = dGatedValue[k] * gate[k];
-                    }
-
                     for (int j = 0; j < dHidden; j++) {
+                        double dGate_j = dGatedValue[j] * up[j];
+                        double dUp_j = dGatedValue[j] * gate[j];
+
                         double sum = sumGateArr[j];
                         double s = sigmoidArr[j];
                         double dSilu = s + (sum * s) * (1.0 - s);
-                        double dSumGate = dGate[j] * dSilu;
+                        double dSumGate = dGate_j * dSilu;
 
                         for (int k = 0; k < dModel; k++) {
+                            // パラメータの勾配
                             dWGate[l][k][j] += attentionOutput[l][i][k] * dSumGate;
-                            dWUp[l][k][j]   += attentionOutput[l][i][k] * dUp[j];
+                            dWUp[l][k][j]   += attentionOutput[l][i][k] * dUp_j;
+
+                            // 入力（AttentionOutput）へ流す勾配
+                            dAttentionOutput[l][i][k] += dSumGate * wGate[l][k][j] + dUp_j * wUp[l][k][j];
                         }
                     }
                 }
 
-                // --- [C] Attention層の逆伝播 ---
-                for (int i = 0; i < seqLen; i++) {
-                    double[] dGatedValue = new double[dHidden];
-                    for (int k = 0; k < dHidden; k++) {
-                        double sum = 0.0;
-                        for (int j = 0; j < dModel; j++) {
-                            sum += dFfnOutput[l][i][j] * wDown[l][k][j];
-                        }
-                        dGatedValue[k] = sum;
-                    }
-
-                    double[] gate = new double[dHidden];
-                    double[] up = new double[dHidden];
-                    double[] sigmoidArr = new double[dHidden];
-                    double[] sumGateArr = new double[dHidden];
-
-                    for (int j = 0; j < dHidden; j++) {
-                        double sum = 0.0;
-                        for (int k = 0; k < dModel; k++) {
-                            sum += attentionOutput[l][i][k] * wGate[l][k][j];
-                        }
-                        sumGateArr[j] = sum;
-                        double sigmoid = 1.0 / (1.0 + Math.exp(-sum));
-                        sigmoidArr[j] = sigmoid;
-                        gate[j] = sum * sigmoid;
-                    }
-                    for (int j = 0; j < dHidden; j++) {
-                        double sum = 0.0;
-                        for (int k = 0; k < dModel; k++) {
-                            sum += attentionOutput[l][i][k] * wUp[l][k][j];
-                        }
-                        up[j] = sum;
-                    }
-
-                    double[] dGate = new double[dHidden];
-                    double[] dUp = new double[dHidden];
-                    for (int k = 0; k < dHidden; k++) {
-                        dGate[k] = dGatedValue[k] * up[k];
-                        dUp[k] = dGatedValue[k] * gate[k];
-                    }
-
-                    for (int j = 0; j < dHidden; j++) {
-                        double sum = sumGateArr[j];
-                        double s = sigmoidArr[j];
-                        double dSilu = s + (sum * s) * (1.0 - s);
-                        double dSumGate = dGate[j] * dSilu;
-
-                        for (int k = 0; k < dModel; k++) {
-                            dAttentionOutput[l][i][k] += dSumGate * wGate[l][k][j] + dUp[j] * wUp[l][k][j];
-                        }
-                    }
-                }
 
                 for (int i = 0; i < seqLen; i++) {
                     for (int j = 0; j < dModel; j++) {
@@ -661,10 +607,11 @@ public class Main {
             // AIへのプロンプト（質問）の形を作る
             String prompt = "U:" + userInput + ">A:";
 
-            int[] genEncoded = new int[prompt.length()];
-            for (int i = 0; i < prompt.length(); i++) {
-                char c = prompt.charAt(i);
-                genEncoded[i] = charToId.getOrDefault(c, 0);
+            // BPEでプロンプトをエンコード
+            List<Integer> promptEncodedList = tokenizer.encode(prompt);
+            int[] genEncoded = new int[promptEncodedList.size()];
+            for (int i = 0; i < promptEncodedList.size(); i++) {
+                genEncoded[i] = promptEncodedList.get(i);
             }
 
             System.out.print("入力: " + userInput + "  生成結果: " + prompt);
@@ -680,7 +627,7 @@ public class Main {
 
                 for (int i = 0; i < genSeqLen; i++) {
                     for (int j = 0; j < vectorSize; j++) {
-                        double angle = i / Math.pow(10000.0, (double) (2 * (j / 2)) / vectorSize);
+                        double angle = i * invFreq[j]; // ← 事前に計算した invFreq を使うように変更
                         if (j % 2 == 0) {
                             inputEmbeddings[i][j] += Math.sin(angle);
                         } else {
@@ -826,14 +773,14 @@ public class Main {
                     }
                 }
 
-                char predictedChar = idToChar.get(bestNextId);
+                String predictedToken = tokenizer.decodeToken(bestNextId);
 
-                //終了文字
-                if (predictedChar == '■') {
+                // 終了トークン（■）の判定
+                if (predictedToken.equals("■")) {
                     break;
                 }
 
-                System.out.print(predictedChar);
+                System.out.print(predictedToken);
 
                 int[] nextGenEncoded = new int[genSeqLen + 1];
                 System.arraycopy(genEncoded, 0, nextGenEncoded, 0, genSeqLen);
