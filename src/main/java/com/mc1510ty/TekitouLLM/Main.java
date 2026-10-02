@@ -1,11 +1,9 @@
 package com.mc1510ty.TekitouLLM;
 
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Random;
-import java.util.Scanner;
+import java.util.*;
 
 public class Main {
+
     static void main() {
 
         long seed = 12345L;
@@ -19,8 +17,26 @@ public class Main {
                 "U:天気は？>A:今日は雨予想ですね。■",
                 "U:眠いな>A:今朝はよく眠れましたか？時間があればお昼寝をしたりするのも手です。■",
                 "U:明日も学校かぁ>A:毎日毎日、同じ日々の繰り返しで大変ですよね。睡眠時間をしっかり取るとまだましになるはずです。■",
-                "U:LLMって何？>A:LLMとは、簡単に言うと現代の会話できるAIのことです。"
+                "U:LLMって何？>A:LLMとは、簡単に言うと現代の会話できるAIのことです。■",
+                "U:Java(プログラミング言語)の名前の由来は何？>A:Java(プログラミング言語)の名前の由来は、開発チームが好んで飲んでいたインドネシア・ジャワ島のコーヒーに由来しています。Javaの歴史についてもっと知りたい場合は、他の質問もどんどん言ってください!■",
+                "U:Javaの最新バージョンは？>A:Java(プログラミング言語)の最新LTSバージョンは、Java25の、'25.0.4.1'です。Java25では、クラス定義の簡略化や、IO.printlnが使用可能になるなど、より便利になりました。■",
+                "U:ls>A:lsは、LinuxやMacOSなどのターミナルで、ディレクトリやファイルの一覧を表示する基本コマンドです。■",
+                "U:桃太郎の桃が流れる音>A:'どんぶらこ'です。■",
+                "U:OpenGLの代替は？>A:主に'Vulkan'が挙げられます。Windows専用であれば、'DirectX'なども可能です。VulkanやDirectXについて質問がある場合は、なんでも言ってください！■",
+                "U:こんにちは>A:こんにちは！今日は何をしますか？■",
+                "U:こんばんは>A:こんばんは。今日は何がありましたか?■"
         };
+
+
+        // 学習設定
+        int epochs = 5000;
+        double learningRate = 0.0005;
+        int numLayers = 4;
+
+        int maxSeqLen = 512;
+
+
+        int vectorSize = 32;
 
         // 2. すべてのテキストから文字を集めて辞書を作る
         HashMap<Character, Integer> charToId = new HashMap<>();
@@ -41,9 +57,8 @@ public class Main {
         }
 
         int vocabSize = charToId.size();
-        int vectorSize = 32;
         int dModel = vectorSize;
-        int dHidden = dModel * 2;
+        int dHidden = dModel * 2; //隠れ層は2倍
         int vocabSizeLocal = charToId.size();
 
         // 3. 埋め込みテーブルの初期化
@@ -53,13 +68,6 @@ public class Main {
                 embeddingTable[i][j] = (random.nextDouble() - 0.5);
             }
         }
-
-        // 学習設定
-        int epochs = 5000;
-        double learningRate = 0.0005;
-        int numLayers = 4;
-
-        int maxSeqLen = 512;
 
         double[][] dWOut   = new double[vectorSize][vocabSize];
         double[][][] dWGate  = new double[numLayers][vectorSize][vectorSize * 2];
