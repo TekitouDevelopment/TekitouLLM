@@ -10,7 +10,23 @@ public class Main {
         Random random = new Random(seed);
 
         // 1. 複数の会話パターン（データセット）を用意する
-        String[] dataset = {
+
+        String[] pretrainDataset = {
+                "絶縁ゲートバイポーラトランジスタは半導体素子のひとつで、NPNPの4層からなりMOSゲートSCRまたはMOSゲートサイリスタ（英語版）と同じ構造でありながら、全動作領域でサイリスタ動作を完全に抑え込み、トランジスタ動作のみをさせるように設計した、MOSゲートで電流を制御するバイポーラトランジスタである。電力制御の用途で使用される。■",
+                "この方針文書は、著作権の対象となっている著作物であって、一般公衆に開放されている屋外の場所、または一般公衆の見やすい屋外の場所に恒常的に設置された美術の著作物について、その著作権法上の扱いについて説明するとともに、当該著作物を被写体とする写真をウィキペディア日本語版において利用する際に守るべき事項を定めたものです。■",
+                "被写体である美術著作物の題号と著作者名を画像ページに記載する。題号と著作者名が設置場所に表示されていない場合であっても、公表された文献に基づく調査を行い、それらが判明すれば記載する。一方、調査を行っても容易に判明しない場合は、記載する必要はない。また、著作者の意思により非公開としていると認められる場合には、記載してはならない。■",
+                "画像は、被写体である美術著作物に密接に関連する事柄が記述されている1以上の記事（標準名前空間）で表示されなければならない。記事における画像表示は、画像のアップロード後すみやかに行い、将来、記事において画像を使用したいという漠然とした意思があるにすぎない状態では、画像のアップロードを避けること。■",
+                "日米いずれの国の著作権法においても、著作物を被写体とする写真は、被写体である著作物の複製物または二次的著作物として扱われ、当該写真の利用に対しては、被写体である著作物の著作権の効力が及びます（日本国著作権法21条、28条、17 U.S.C. §102(a), §103）。したがって、日米両国の著作権法の下で、当該写真を被写体の著作物の著作権者の許諾を得ることなく適法に利用するには、両国の著作権法における著作権の制限規定に基づく必要があります。■",
+                "東武10000系電車は、1983年（昭和58年）に登場した東武鉄道の通勤形電車。■",
+                "ベースとなる10000型電車と、マイナーチェンジ車として1988年（昭和63年）に登場した10030型電車、VVVFインバータ制御試作車として1988年に登場した10080型電車にの3種に分類される。■",
+                "Bve trainsim は、列車の運転をシミュレーションする Windows 用ゲームで、個人で制作しているフリーソフトです。■",
+                "自分の好きな路線や車両を作成して運転することができます。ユーザーの皆さんが作成した多くの路線データや車両データがウェブ上に公開されています。データをダウンロードして組み込めば、運転できる路線や車両を増やすことができます。■",
+                "Vulkan（ヴァルカン）は、クロノス・グループ（英: Khronos Group）が策定している、「PCやコンソールから、携帯電話や組込みプラットフォームに至るまで、あらゆるデバイスで使われる最先端のGPUに高効率かつクロスプラットフォーム型のアクセスを実現する、新世代のグラフィックス/コンピュートAPI」で、オープンスタンダード・ロイヤリティフリー・クロスプラットフォームとして提唱されている。Vulkan 1.0の仕様の公開日は2016年2月16日である。■",
+                "グラフィックスハードウェア層に近いローレベル (low level) な制御を目的としており、これによりオーバーヘッドを低減し、ハードウェアの性能を限界まで引き出すことが可能となる。VulkanはAppleのMetalやマイクロソフトのDirect3D 12といった先発のローレベルAPIと競合するが、プラットフォーム独自の固有仕様ではなく、様々なデバイスやオペレーティングシステムをターゲットにできることが特徴である。■",
+        };
+
+
+        String[] chatDataset = {
                 "U:こんにちは>A:こんにちは、良い天気ですね。■",
                 "U:おはよう>A:おはようございます、今朝は何時に起きましたか？■",
                 "U:こんばんは>A:こんばんは、月がきれいですね。■",
@@ -22,30 +38,49 @@ public class Main {
                 "U:Javaの最新バージョンは？>A:Java(プログラミング言語)の最新LTSバージョンは、Java25の、'25.0.4.1'です。Java25では、クラス定義の簡略化や、IO.printlnが使用可能になるなど、より便利になりました。■",
                 "U:ls>A:lsは、LinuxやMacOSなどのターミナルで、ディレクトリやファイルの一覧を表示する基本コマンドです。■",
                 "U:桃太郎の桃が流れる音>A:'どんぶらこ'です。■",
-                "U:OpenGLの代替は？>A:主に'Vulkan'が挙げられます。Windows専用であれば、'DirectX'なども可能です。VulkanやDirectXについて質問がある場合は、なんでも言ってください！■",
+                "U:OpenGLの代替は？>A:主に'Vulkan'が挙げられます。Windows専用であれば、'DirectX'なども選択肢としてあります。VulkanやDirectXについて質問がある場合は、なんでも言ってください！■",
                 "U:こんにちは>A:こんにちは！今日は何をしますか？■",
                 "U:こんばんは>A:こんばんは。今日は何がありましたか?■",
                 "U:Windowsの最新バージョン>A:Microsoft Windowsの2026年10月2日時点での最新バージョンは、2021年10月5日にリリースされた'Windows 11'です。■",
-                "U:BVE>A:'BVE'は、mackoy氏が主に個人で開発している、3DCGを用いたトレインシミュレーターのことです。最新バージョンは2020年9月23日にリリースされた、'BVE6'です。公式サイトのURLは、'https://bvets.net/'となっています。"
+                "U:BVE>A:'BVE'は、mackoy氏が主に個人で開発している、3DCGを用いたトレインシミュレーターのことです。最新バージョンは2020年9月23日にリリースされた、'BVE6'です。公式サイトのURLは、'https://bvets.net/'となっています。■"
         };
 
 
         // 学習設定
-        int epochs = 5000;
-        double learningRate = 0.0005;
-        int numLayers = 8;
+        int numLayers = 12; //層(レイヤー)の数
+        int maxSeqLen = 256; //最大文字数(ふやしすぎるとメモリ爆発)
+        int vectorSize = 96; //次元の数
+        int pretrainEpochs = 80; // 事前学習の回数
+        int chatEpochs = 150;     // 指示ファインチューニングの回数
+        int mixEpochs = 100;      // 最後に両方をごちゃ混ぜにするミックス学習
 
-        int maxSeqLen = 128;
+        double learningRate = 0.0005; //学習率
+        int batchSize = 16; //並列数(String[]の中身がこの数字以下だと並列化が少なくなる)
 
 
-        int vectorSize = 32;
 
-        int batchSize = 16;
+
+        int epochs = pretrainEpochs + chatEpochs + mixEpochs;
+
+
+        // ★ 追加：AdamWのハイパーパラメータ
+        double beta1 = 0.9;
+        double beta2 = 0.999;
+        double eps = 1e-8;
+        double weightDecay = 0.01; // 重み減衰（過学習を抑える強さ）
+        int adamStep = 0; // 更新ステップ数カウンター
+
+
 
         // 2. BPEトークナイザーの初期化と学習
+        // 事前学習用と対話用の両方の言葉をトークナイザーに覚えさせるために結合します
+        String[] allDataset = new String[pretrainDataset.length + chatDataset.length];
+        System.arraycopy(pretrainDataset, 0, allDataset, 0, pretrainDataset.length);
+        System.arraycopy(chatDataset, 0, allDataset, pretrainDataset.length, chatDataset.length);
+
         SimpleTokenizer tokenizer = new SimpleTokenizer();
-        // 例として、目標語彙サイズを320、最小頻度を2に設定して学習
-        tokenizer.train(dataset, 320, 2);
+        // 結合した allDataset を使ってトークナイザーを訓練
+        tokenizer.train(allDataset, 1000, 2);
 
         System.out.println("\n作成されたサブワード:");
         tokenizer.tokenToId.entrySet().stream().forEach(entry -> {
@@ -111,6 +146,33 @@ public class Main {
         double[][][] globalDWv = new double[numLayers][vectorSize][vectorSize];
         double[][] globalDEmbeddingTable = new double[vocabSize][vectorSize];
 
+
+
+        // --- AdamW用のモーメント配列（1次モーメント m, 2次モーメント v）の用意 ---
+        double[][] mDWOut = new double[vectorSize][vocabSize];
+        double[][] vDWOut = new double[vectorSize][vocabSize];
+
+        double[][] mDEmbeddingTable = new double[vocabSize][vectorSize];
+        double[][] vDEmbeddingTable = new double[vocabSize][vectorSize];
+
+        double[][][] mDWq = new double[numLayers][vectorSize][vectorSize];
+        double[][][] vDWq = new double[numLayers][vectorSize][vectorSize];
+        double[][][] mDWk = new double[numLayers][vectorSize][vectorSize];
+        double[][][] vDWk = new double[numLayers][vectorSize][vectorSize];
+        double[][][] mDWv = new double[numLayers][vectorSize][vectorSize];
+        double[][][] vDWv = new double[numLayers][vectorSize][vectorSize];
+
+        double[][][] mDWGate = new double[numLayers][vectorSize][dHidden];
+        double[][][] vDWGate = new double[numLayers][vectorSize][dHidden];
+        double[][][] mDWUp = new double[numLayers][vectorSize][dHidden];
+        double[][][] vDWUp = new double[numLayers][vectorSize][dHidden];
+
+        double[][][] mDWDown = new double[numLayers][dHidden][vectorSize];
+        double[][][] vDWDown = new double[numLayers][dHidden][vectorSize];
+
+
+
+
         // --- ローカル勾配（各スレッドが自分専用に使う作業机：一番左に batchSize が付く） ---
         double[][][] localDWOut = new double[batchSize][vectorSize][vocabSize];
         double[][][][] localDWGate = new double[batchSize][numLayers][vectorSize][vectorSize * 2];
@@ -150,7 +212,42 @@ public class Main {
 
         System.out.println("=== 学習開始 ===");
 
+        int epochstatus = 0;
+
         for (int epoch = 0; epoch < epochs; epoch++) {
+
+
+            String[] currentDataset;
+            if (epoch < pretrainEpochs) {
+                currentDataset = pretrainDataset;
+                if (epochstatus == 0) {
+                    IO.println("=====事前学習=====");
+                    epochstatus = 1;
+                }
+            } else if (epoch < pretrainEpochs + chatEpochs) {
+                currentDataset = chatDataset;
+                if (epochstatus == 1) {
+                    IO.println("=====対話学習=====");
+                    epochstatus = 2;
+                }
+            } else {
+                currentDataset = allDataset;
+                if (epochstatus == 2) {
+                    IO.println("=====混合学習=====");
+                    epochstatus = 3;
+                }
+            }
+
+            Integer[] indices = new Integer[currentDataset.length];
+            for (int i = 0; i < indices.length; i++) {
+                indices[i] = i;
+            }
+            List<Integer> indexList = Arrays.asList(indices);
+            Collections.shuffle(indexList, random); // 最初に用意した random を使います
+            Integer[] shuffledIndices = indexList.toArray(new Integer[0]);
+
+
+
 
             // --- 1. グローバル勾配のゼロクリア ---
             for (double[] row : globalDWOut) Arrays.fill(row, 0.0);
@@ -179,9 +276,15 @@ public class Main {
 
             // --- 3. 16個のデータを並列（ParallelStream）で同時に処理 ---
             final int currentEpoch = epoch;
+            final String[] finalCurrentDataset = currentDataset;
+            final Integer[] finalShuffledIndices = shuffledIndices;
+
             java.util.stream.IntStream.range(0, batchSize).parallel().forEach(b -> {
-                int dataIndex = (currentEpoch * batchSize + b) % dataset.length;
-                String currentText = dataset[dataIndex];
+                String currentText;
+
+                // ★ シャッフルされた配列から順番にデータを取得する
+                int dataIndex = finalShuffledIndices[b % finalShuffledIndices.length];
+                currentText = finalCurrentDataset[dataIndex];
 
                 List<Integer> encodedList = tokenizer.encode(currentText);
                 int seqLen = encodedList.size();
@@ -189,6 +292,20 @@ public class Main {
                 for (int i = 0; i < seqLen; i++) {
                     encoded[i] = encodedList.get(i);
                 }
+
+
+                boolean isChatData = currentText.startsWith("U:");
+                int startPredictIdx = 0;
+
+                if (isChatData) {
+                    int aIndex = currentText.indexOf(">A:");
+                    if (aIndex != -1) {
+                        String promptPart = currentText.substring(0, aIndex + 3);
+                        List<Integer> promptEncoded = tokenizer.encode(promptPart);
+                        startPredictIdx = promptEncoded.size() - 1;
+                    }
+                }
+
 
                 // 4. Embedding Lookup
                 for (int i = 0; i < seqLen; i++) {
@@ -343,7 +460,11 @@ public class Main {
                 // --- 出力層の逆伝播 & Loss計算 ---
                 int numPredictions = seqLen - 1;
                 double threadLoss = 0.0;
+                int validPredictionCount = 0;
                 for (int i = 0; i < numPredictions; i++) {
+                    if (isChatData && i < startPredictIdx) {
+                        continue;
+                    }
                     int targetId = encoded[i + 1];
                     double[] logits = new double[vocabSizeLocal];
                     for (int j = 0; j < vocabSizeLocal; j++) {
@@ -371,6 +492,7 @@ public class Main {
 
                     // 損失の加算
                     threadLoss += -Math.log(Math.max(probs[targetId], 1e-15));
+                    validPredictionCount++; // 有効な予測数をカウントする
 
                     double[] dLogits = new double[vocabSizeLocal];
                     System.arraycopy(probs, 0, dLogits, 0, vocabSizeLocal);
@@ -387,7 +509,12 @@ public class Main {
                         dFfnOutput[b][numLayers - 1][i][k] += gradSum;
                     }
                 }
-                epochTotalLoss.add(threadLoss / numPredictions);
+                if (validPredictionCount > 0) {
+                    epochTotalLoss.add(threadLoss / validPredictionCount);
+                } else {
+                    epochTotalLoss.add(0.0);
+                    IO.println("INFO: epochTotalLossが0文字でした");
+                }
 
                 // --- 各レイヤーの逆伝播 ---
                 for (int l = numLayers - 1; l >= 0; l--) {
@@ -617,42 +744,112 @@ public class Main {
                 }
             }
 
-            // --- 5. 平均化したグローバル勾配を使ってすべての重みを一括更新 ---
+            // --- 5. AdamWによるパラメータ更新 ---
+            adamStep++;
+            double correction1 = 1.0 - Math.pow(beta1, adamStep);
+            double correction2 = 1.0 - Math.pow(beta2, adamStep);
+
+            // 1. wOut の更新
             for (int i = 0; i < dModel; i++) {
                 for (int j = 0; j < vocabSizeLocal; j++) {
-                    wOut[i][j] -= learningRate * globalDWOut[i][j];
+                    double g = globalDWOut[i][j];
+                    mDWOut[i][j] = beta1 * mDWOut[i][j] + (1.0 - beta1) * g;
+                    vDWOut[i][j] = beta2 * vDWOut[i][j] + (1.0 - beta2) * (g * g);
+
+                    double mHat = mDWOut[i][j] / correction1;
+                    double vHat = vDWOut[i][j] / correction2;
+
+                    // AdamW: Weight Decay を直接適用しつつ更新
+                    wOut[i][j] = wOut[i][j] - learningRate * weightDecay * wOut[i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
                 }
             }
 
+            // 2. embeddingTable の更新
             for (int i = 0; i < vocabSize; i++) {
                 for (int j = 0; j < vectorSize; j++) {
-                    embeddingTable[i][j] -= learningRate * globalDEmbeddingTable[i][j];
+                    double g = globalDEmbeddingTable[i][j];
+                    mDEmbeddingTable[i][j] = beta1 * mDEmbeddingTable[i][j] + (1.0 - beta1) * g;
+                    vDEmbeddingTable[i][j] = beta2 * vDEmbeddingTable[i][j] + (1.0 - beta2) * (g * g);
+
+                    double mHat = mDEmbeddingTable[i][j] / correction1;
+                    double vHat = vDEmbeddingTable[i][j] / correction2;
+
+                    embeddingTable[i][j] = embeddingTable[i][j] - learningRate * weightDecay * embeddingTable[i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
                 }
             }
 
+            // 3. 各レイヤーの重み (wq, wk, wv, wGate, wUp, wDown) の更新
             for (int l = 0; l < numLayers; l++) {
+                // wq
                 for (int i = 0; i < dModel; i++) {
                     for (int j = 0; j < dModel; j++) {
-                        wq[l][i][j] -= learningRate * globalDWq[l][i][j];
-                        wk[l][i][j] -= learningRate * globalDWk[l][i][j];
-                        wv[l][i][j] -= learningRate * globalDWv[l][i][j];
+                        double g = globalDWq[l][i][j];
+                        mDWq[l][i][j] = beta1 * mDWq[l][i][j] + (1.0 - beta1) * g;
+                        vDWq[l][i][j] = beta2 * vDWq[l][i][j] + (1.0 - beta2) * (g * g);
+                        double mHat = mDWq[l][i][j] / correction1;
+                        double vHat = vDWq[l][i][j] / correction2;
+                        wq[l][i][j] = wq[l][i][j] - learningRate * weightDecay * wq[l][i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
                     }
                 }
+                // wk
+                for (int i = 0; i < dModel; i++) {
+                    for (int j = 0; j < dModel; j++) {
+                        double g = globalDWk[l][i][j];
+                        mDWk[l][i][j] = beta1 * mDWk[l][i][j] + (1.0 - beta1) * g;
+                        vDWk[l][i][j] = beta2 * vDWk[l][i][j] + (1.0 - beta2) * (g * g);
+                        double mHat = mDWk[l][i][j] / correction1;
+                        double vHat = vDWk[l][i][j] / correction2;
+                        wk[l][i][j] = wk[l][i][j] - learningRate * weightDecay * wk[l][i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
+                    }
+                }
+                // wv
+                for (int i = 0; i < dModel; i++) {
+                    for (int j = 0; j < dModel; j++) {
+                        double g = globalDWv[l][i][j];
+                        mDWv[l][i][j] = beta1 * mDWv[l][i][j] + (1.0 - beta1) * g;
+                        vDWv[l][i][j] = beta2 * vDWv[l][i][j] + (1.0 - beta2) * (g * g);
+                        double mHat = mDWv[l][i][j] / correction1;
+                        double vHat = vDWv[l][i][j] / correction2;
+                        wv[l][i][j] = wv[l][i][j] - learningRate * weightDecay * wv[l][i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
+                    }
+                }
+                // wGate
                 for (int i = 0; i < dModel; i++) {
                     for (int j = 0; j < dHidden; j++) {
-                        wGate[l][i][j] -= learningRate * globalDWGate[l][i][j];
-                        wUp[l][i][j]   -= learningRate * globalDWUp[l][i][j];
+                        double g = globalDWGate[l][i][j];
+                        mDWGate[l][i][j] = beta1 * mDWGate[l][i][j] + (1.0 - beta1) * g;
+                        vDWGate[l][i][j] = beta2 * vDWGate[l][i][j] + (1.0 - beta2) * (g * g);
+                        double mHat = mDWGate[l][i][j] / correction1;
+                        double vHat = vDWGate[l][i][j] / correction2;
+                        wGate[l][i][j] = wGate[l][i][j] - learningRate * weightDecay * wGate[l][i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
                     }
                 }
+                // wUp
+                for (int i = 0; i < dModel; i++) {
+                    for (int j = 0; j < dHidden; j++) {
+                        double g = globalDWUp[l][i][j];
+                        mDWUp[l][i][j] = beta1 * mDWUp[l][i][j] + (1.0 - beta1) * g;
+                        vDWUp[l][i][j] = beta2 * vDWUp[l][i][j] + (1.0 - beta2) * (g * g);
+                        double mHat = mDWUp[l][i][j] / correction1;
+                        double vHat = vDWUp[l][i][j] / correction2;
+                        wUp[l][i][j] = wUp[l][i][j] - learningRate * weightDecay * wUp[l][i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
+                    }
+                }
+                // wDown
                 for (int i = 0; i < dHidden; i++) {
                     for (int j = 0; j < dModel; j++) {
-                        wDown[l][i][j] -= learningRate * globalDWDown[l][i][j];
+                        double g = globalDWDown[l][i][j];
+                        mDWDown[l][i][j] = beta1 * mDWDown[l][i][j] + (1.0 - beta1) * g;
+                        vDWDown[l][i][j] = beta2 * vDWDown[l][i][j] + (1.0 - beta2) * (g * g);
+                        double mHat = mDWDown[l][i][j] / correction1;
+                        double vHat = vDWDown[l][i][j] / correction2;
+                        wDown[l][i][j] = wDown[l][i][j] - learningRate * weightDecay * wDown[l][i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
                     }
                 }
             }
 
             // Lossの計算と表示
-            if (epoch == 0 || (epoch + 1) % 500 == 0 || epoch == epochs - 1) {
+            if (epoch == 0 || (epoch + 1) % 1 == 0 || epoch == epochs - 1) {
                 double avgLoss = epochTotalLoss.sum() / batchSize;
                 System.out.println("Epoch [" + (epoch + 1) + "/" + epochs + "] - Loss: " + avgLoss);
             }
@@ -677,7 +874,7 @@ public class Main {
 
             System.out.print("入力: " + userInput + "  生成結果: " + prompt);
 
-            for (int step = 0; step < 100; step++) {
+            for (int step = 0; step < 300; step++) {
                 genSeqLen = genEncoded.length;
 
                 // 推論時はバッチの [0] 番目の作業スペースを利用する

@@ -41,8 +41,10 @@ tasks.register<Exec>("run") {
 
     if (System.getProperty("os.name").lowercase().contains("windows")) {
         // cmd /k に渡すコマンド全体をひとつの文字列にまとめる
-        val command = "chcp 65001 &&java -jar \"$jarFile\" && pause && exit"
-        commandLine("cmd", "/c", "start", "cmd", "/k", command)
+        val command = "chcp 65001 && java -jar \"$jarFile\" && pause && exit"
+
+        // ★ start の直後に "" (空タイトル) を追加します
+        commandLine("cmd", "/c", "start", "", "/ABOVENORMAL", "/AFFINITY", "FFF", "cmd", "/k", command)
     } else {
         commandLine("java", "--enable-native-access=ALL-UNNAMED", "--sun-misc-unsafe-memory-access=allow", "-jar", jarFile)
     }
