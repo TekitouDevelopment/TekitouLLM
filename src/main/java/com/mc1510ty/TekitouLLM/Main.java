@@ -73,12 +73,12 @@ public class Main {
         int vectorSize = larned ? modeldata.vectorSize : 128; // 次元の数
         int maxSeqLen = 768; // 最大文字数
         int pretrainEpochs = 120; // 事前学習の回数
-        int chatEpochs = 150;     // 指示ファインチューニングの回数
-        int mixEpochs = 80;      // 最後に両方をごちゃ混ぜにするミックス学習
+        int chatEpochs = 150;     // 指示学習の回数
+        int mixEpochs = 80;      // ミックス学習の回数
 
         double learningRate = 0.0005; // 学習率
         int batchSize = 12; // 並列数
-        int targetVocabSize = 1200;
+        int targetVocabSize = 1200; //BPEの目標コンテキスト数
 
         // 設定や初期化のイメージ
         int num_heads = larned ? modeldata.num_heads : 8; // ヘッド数
@@ -260,12 +260,23 @@ public class Main {
         double[][] mRmsWeightFfn = new double[numLayers][vectorSize];
         double[][] vRmsWeightFfn = new double[numLayers][vectorSize];
 
+        String[] modenames = new String[4];
+        modenames[0] = "未知のモード";
+        modenames[1] = "事前学習";
+        modenames[2] = "対話学習";
+        modenames[3] = "ミックス学習";
+
         if (!larned) {
             for (int i = 0; i < vocabSize; i++) {
                 for (int j = 0; j < vectorSize; j++) {
                     embeddingTable[i][j] = (random.nextDouble() - 0.5);
                 }
             }
+
+            long startTime = System.nanoTime();
+            long endTime;
+            double elapsedSeconds;
+
 
             System.out.println("=== 学習開始 ===");
 
@@ -1099,10 +1110,15 @@ public class Main {
                     }
                 }
 
+                endTime = System.nanoTime();
+                elapsedSeconds = (endTime - startTime) / 1_000_000_000.0;
+
+
+
                 // Lossの計算と表示
                 if (epoch == 0 || (epoch + 1) % 1 == 0 || epoch == epochs - 1) {
                     double avgLoss = epochTotalLoss.sum() / batchSize;
-                    System.out.println("Epoch [" + (epoch + 1) + "/" + epochs + "] - Loss: " + avgLoss);
+                    System.out.println("Epoch [" + (epoch + 1) + "/" + epochs + "] - Loss: " + avgLoss + " Mode: " + modenames[epochstatus] + " 経過時間: " + elapsedSeconds + "秒");
                 }
             }
 
@@ -1112,6 +1128,11 @@ public class Main {
                 e.printStackTrace();
                 IO.println("重みの保存に失敗しました!");
             }
+
+            IO.println("学習完了!");
+
+
+
 
         }
 
