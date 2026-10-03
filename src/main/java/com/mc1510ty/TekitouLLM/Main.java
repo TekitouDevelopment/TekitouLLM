@@ -51,10 +51,10 @@ public class Main {
 
 
         // 学習設定
-        int numLayers = 12; //層(レイヤー)の数
+        int numLayers = 6; //層(レイヤー)の数
         int maxSeqLen = 256; //最大文字数(ふやしすぎるとメモリ爆発)
         int vectorSize = 96; //次元の数
-        int pretrainEpochs = 80; // 事前学習の回数
+        int pretrainEpochs = 120; // 事前学習の回数
         int chatEpochs = 150;     // 指示ファインチューニングの回数
         int mixEpochs = 100;      // 最後に両方をごちゃ混ぜにするミックス学習
 
@@ -108,6 +108,7 @@ public class Main {
             }
         }
 
+
 // 重みの定義（マルチヘッド対応）
         double[][][][] wq = new double[numLayers][num_heads][vectorSize][head_size];
         double[][][][] wk = new double[numLayers][num_heads][vectorSize][head_size];
@@ -146,6 +147,16 @@ public class Main {
             }
         }
 
+        double[][] rmsWeightAttention = new double[numLayers][vectorSize];
+        double[][] rmsWeightFfn = new double[numLayers][vectorSize];
+
+        for (int l = 0; l < numLayers; l++) {
+            for (int i = 0; i < vectorSize; i++) {
+                rmsWeightAttention[l][i] = 1.0;
+                rmsWeightFfn[l][i] = 1.0;
+            }
+        }
+
 // --- グローバル勾配（全スレッドの結果を最終的に合算する場所） ---
         double[][] globalDWOut = new double[vectorSize][vocabSize];
         double[][][] globalDWGate = new double[numLayers][vectorSize][vectorSize * 2];
@@ -156,6 +167,7 @@ public class Main {
         double[][][][] globalDWk = new double[numLayers][num_heads][vectorSize][head_size];
         double[][][][] globalDWv = new double[numLayers][num_heads][vectorSize][head_size];
         double[][] globalDEmbeddingTable = new double[vocabSize][vectorSize];
+
 
 // --- AdamW用のモーメント配列（1次モーメント m, 2次モーメント v）の用意 ---
         double[][] mDWOut = new double[vectorSize][vocabSize];
@@ -180,6 +192,10 @@ public class Main {
         double[][][] mDWDown = new double[numLayers][dHidden][vectorSize];
         double[][][] vDWDown = new double[numLayers][dHidden][vectorSize];
 
+        double[][] globalDRmsWeightAttention = new double[numLayers][vectorSize];
+        double[][] globalDRmsWeightFfn = new double[numLayers][vectorSize];
+
+
 // --- ローカル勾配（各スレッドが自分専用に使う作業机） ---
         double[][][] localDWOut = new double[batchSize][vectorSize][vocabSize];
         double[][][][] localDWGate = new double[batchSize][numLayers][vectorSize][vectorSize * 2];
@@ -190,6 +206,9 @@ public class Main {
         double[][][][][] localDWk = new double[batchSize][numLayers][num_heads][vectorSize][head_size];
         double[][][][][] localDWv = new double[batchSize][numLayers][num_heads][vectorSize][head_size];
         double[][][] localDEmbeddingTable = new double[batchSize][vocabSize][vectorSize];
+
+        double[][][] localDRmsWeightAttention = new double[batchSize][numLayers][vectorSize];
+        double[][][] localDRmsWeightFfn = new double[batchSize][numLayers][vectorSize];
 
         double[] invFreq = new double[vectorSize];
         for (int j = 0; j < vectorSize; j++) {
@@ -220,6 +239,11 @@ public class Main {
         double[][][][][] dKey = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
         double[][][] dInputEmbeddings = new double[batchSize][maxSeqLen][vectorSize];
 
+        double[][] mRmsWeightAttention = new double[numLayers][vectorSize];
+        double[][] vRmsWeightAttention = new double[numLayers][vectorSize];
+
+        double[][] mRmsWeightFfn = new double[numLayers][vectorSize];
+        double[][] vRmsWeightFfn = new double[numLayers][vectorSize];
 
         System.out.println("=== 学習開始 ===");
 
@@ -259,6 +283,10 @@ public class Main {
             // --- 1. グローバル勾配のゼロクリア ---
             for (double[] row : globalDWOut) Arrays.fill(row, 0.0);
             for (double[] row : globalDEmbeddingTable) Arrays.fill(row, 0.0);
+
+            for (double[] row : globalDRmsWeightAttention) Arrays.fill(row, 0.0);
+            for (double[] row : globalDRmsWeightFfn) Arrays.fill(row, 0.0);
+
             for (double[][] matrix : globalDWGate) for (double[] row : matrix) Arrays.fill(row, 0.0);
             for (double[][] matrix : globalDWUp) for (double[] row : matrix) Arrays.fill(row, 0.0);
             for (double[][] matrix : globalDWDown) for (double[] row : matrix) Arrays.fill(row, 0.0);
@@ -270,6 +298,10 @@ public class Main {
             for (int b = 0; b < batchSize; b++) {
                 for (double[] row : localDWOut[b]) Arrays.fill(row, 0.0);
                 for (double[] row : localDEmbeddingTable[b]) Arrays.fill(row, 0.0);
+
+                for (double[] row : localDRmsWeightAttention[b]) Arrays.fill(row, 0.0);
+                for (double[] row : localDRmsWeightFfn[b]) Arrays.fill(row, 0.0);
+
                 for (double[][] matrix : localDWGate[b]) for (double[] row : matrix) Arrays.fill(row, 0.0);
                 for (double[][] matrix : localDWUp[b]) for (double[] row : matrix) Arrays.fill(row, 0.0);
                 for (double[][] matrix : localDWDown[b]) for (double[] row : matrix) Arrays.fill(row, 0.0);
@@ -339,39 +371,45 @@ public class Main {
                     final int layer = l;
                     double[][] currentLayerInput = (layer == 0) ? inputEmbeddings[b] : ffnOutput[b][layer - 1];
 
-                    // 6. Query (Q)
+                    // ★追加: Attentionに入る前にRMSNormをかける
+                    double[][] normedInput = new double[seqLen][dModel];
+                    for (int i = 0; i < seqLen; i++) {
+                        normedInput[i] = rmsNorm(currentLayerInput[i], rmsWeightAttention[layer], 1e-5);
+                    }
+
+                    // 6. Query (Q) ※ currentLayerInput の代わりに normedInput を使う
                     for (int h = 0; h < num_heads; h++) {
                         for (int i = 0; i < seqLen; i++) {
                             for (int j = 0; j < head_size; j++) {
                                 double sum = 0.0;
                                 for (int k = 0; k < dModel; k++) {
-                                    sum += currentLayerInput[i][k] * wq[layer][h][k][j];
+                                    sum += normedInput[i][k] * wq[layer][h][k][j]; // ← normedInputに変更
                                 }
                                 query[b][layer][i][h][j] = sum;
                             }
                         }
                     }
 
-                    // 7. Key (K) ※ j < dModel から head_size に修正しています
+                    // 7. Key (K) も同様に normedInput を使う
                     for (int h = 0; h < num_heads; h++) {
                         for (int i = 0; i < seqLen; i++) {
-                            for (int j = 0; j < head_size; j++) { // ← head_sizeに変更
+                            for (int j = 0; j < head_size; j++) {
                                 double sum = 0.0;
                                 for (int k = 0; k < dModel; k++) {
-                                    sum += currentLayerInput[i][k] * wk[layer][h][k][j];
+                                    sum += normedInput[i][k] * wk[layer][h][k][j]; // ← normedInputに変更
                                 }
                                 key[b][layer][i][h][j] = sum;
                             }
                         }
                     }
 
-                    // 8. Value (V) ※こちらも同様に head_size に修正
+                    // 8. Value (V) も同様に normedInput を使う
                     for (int h = 0; h < num_heads; h++) {
                         for (int i = 0; i < seqLen; i++) {
-                            for (int j = 0; j < head_size; j++) { // ← head_sizeに変更
+                            for (int j = 0; j < head_size; j++) {
                                 double sum = 0.0;
                                 for (int k = 0; k < dModel; k++) {
-                                    sum += currentLayerInput[i][k] * wv[layer][h][k][j];
+                                    sum += normedInput[i][k] * wv[layer][h][k][j]; // ← normedInputに変更
                                 }
                                 value[b][layer][i][h][j] = sum;
                             }
@@ -435,6 +473,11 @@ public class Main {
                         }
                     }
 
+                    double[][] normedAttentionOutput = new double[seqLen][dModel];
+                    for (int i = 0; i < seqLen; i++) {
+                        normedAttentionOutput[i] = rmsNorm(attentionOutput[b][layer][i], rmsWeightFfn[layer], 1e-5);
+                    }
+
                     // 12. FFN
                     for (int i = 0; i < seqLen; i++) {
                         double[] gate = new double[dHidden];
@@ -445,7 +488,7 @@ public class Main {
                             double sumGate = 0.0;
                             double sumUp = 0.0;
                             for (int k = 0; k < dModel; k++) {
-                                double val = attentionOutput[b][layer][i][k];
+                                double val = normedAttentionOutput[i][k]; // ← normedAttentionOutputを使う
                                 sumGate += val * wGate[layer][k][j];
                                 sumUp += val * wUp[layer][k][j];
                             }
@@ -458,12 +501,13 @@ public class Main {
                             gatedValue[j] = gate[j] * up[j];
                         }
 
+                        // FFNの最後でも「FFNの出力 ＋ Attention出力（残差接続）」をします
                         for (int j = 0; j < dModel; j++) {
                             double sum = 0.0;
                             for (int k = 0; k < dHidden; k++) {
                                 sum += gatedValue[k] * wDown[layer][k][j];
                             }
-                            ffnOutput[b][layer][i][j] = sum + attentionOutput[b][layer][i][j];
+                            ffnOutput[b][layer][i][j] = sum + attentionOutput[b][layer][i][j]; // 残差接続
                         }
                     }
                 }
@@ -617,6 +661,45 @@ public class Main {
                         }
                     }
 
+
+                    // ==========================================
+                    // FFN前のRMSNormの逆伝播
+                    // ==========================================
+                    for (int i = 0; i < seqLen; i++) {
+                        double[] x = attentionOutput[b][l][i]; // RMSNormの入力（生の値）
+                        double[] dyNormed = new double[dModel]; // FFNから伝わってきた勾配
+                        for (int k = 0; k < dModel; k++) {
+                            dyNormed[k] = dAttentionOutput[b][l][i][k];
+                            dAttentionOutput[b][l][i][k] = 0.0; // 一旦リセットして上書き
+                        }
+
+                        // 分散とRMSの再計算
+                        double sumSq = 0.0;
+                        for (int k = 0; k < dModel; k++) {
+                            sumSq += x[k] * x[k];
+                        }
+                        double rms = Math.sqrt((sumSq / dModel) + 1e-5);
+                        double invRms = 1.0 / rms;
+
+                        // 1. RMSNormの重み（rmsWeightFfn）の勾配を計算
+                        for (int k = 0; k < dModel; k++) {
+                            double normedVal = x[k] * invRms;
+                            localDRmsWeightFfn[b][l][k] += dyNormed[k] * normedVal;
+                        }
+
+                        // 2. 入力 x に対する勾配（dx）を計算して dAttentionOutput に戻す
+                        double sumTerm = 0.0;
+                        for (int k = 0; k < dModel; k++) {
+                            sumTerm += dyNormed[k] * rmsWeightFfn[l][k] * (x[k] * invRms);
+                        }
+
+                        for (int k = 0; k < dModel; k++) {
+                            double term1 = dyNormed[k] * rmsWeightFfn[l][k];
+                            double term2 = (x[k] * invRms) * sumTerm / dModel;
+                            dAttentionOutput[b][l][i][k] = invRms * (term1 - term2);
+                        }
+                    }
+
 // 1. Attention Output から Attention Weights と Value への勾配（Concatをバラす）
                     for (int i = 0; i < seqLen; i++) {
                         for (int h = 0; h < num_heads; h++) {
@@ -679,7 +762,10 @@ public class Main {
                         }
                     }
 
-// 5. Query と Value の重み勾配（wq, wv）と、入力への勾配計算
+                    // 一時的にAttention側からの入力勾配を集める配列
+                    double[][] dNormedInput = new double[seqLen][vectorSize];
+
+                    // 5. Query と Value の重み勾配（wq, wv）と、入力への勾配計算
                     for (int i = 0; i < seqLen; i++) {
                         for (int h = 0; h < num_heads; h++) {
                             for (int j = 0; j < head_size; j++) {
@@ -690,19 +776,14 @@ public class Main {
                                     localDWq[b][l][h][k][j] += currentLayerInput[i][k] * gQ;
                                     localDWv[b][l][h][k][j] += currentLayerInput[i][k] * gV;
 
-                                    // 各ヘッドの重みを通した入力への勾配を加算
-                                    double gradInputVal = gQ * wq[l][h][k][j] + gV * wv[l][h][k][j];
-                                    if (l > 0) {
-                                        dFfnOutput[b][l - 1][i][k] += gradInputVal;
-                                    } else {
-                                        dInputEmbeddings[b][i][k] += gradInputVal;
-                                    }
+                                    // 直接前の層に足すのではなく、dNormedInputに集める
+                                    dNormedInput[i][k] += gQ * wq[l][h][k][j] + gV * wv[l][h][k][j];
                                 }
                             }
                         }
                     }
 
-// 6. Key の重み勾配（wk）と、入力への勾配計算
+                    // 6. Key の重み勾配（wk）と、入力への勾配計算
                     for (int j = 0; j < seqLen; j++) {
                         for (int h = 0; h < num_heads; h++) {
                             for (int k = 0; k < head_size; k++) {
@@ -710,13 +791,49 @@ public class Main {
                                 for (int m = 0; m < vectorSize; m++) {
                                     localDWk[b][l][h][m][k] += currentLayerInput[j][m] * gK;
 
-                                    double gradInputValK = gK * wk[l][h][m][k];
-                                    if (l > 0) {
-                                        dFfnOutput[b][l - 1][j][m] += gradInputValK;
-                                    } else {
-                                        dInputEmbeddings[b][j][m] += gradInputValK;
-                                    }
+                                    // ここもdNormedInputに集める
+                                    dNormedInput[j][m] += gK * wk[l][h][m][k];
                                 }
+                            }
+                        }
+                    }
+
+                    // ==========================================
+                    // 【追加】Attention前のRMSNormの逆伝播
+                    // ==========================================
+                    for (int i = 0; i < seqLen; i++) {
+                        double[] x = currentLayerInput[i]; // RMSNormを通る前の生の値
+                        double[] dyNormed = dNormedInput[i]; // Attentionから伝わってきた勾配
+
+                        // 分散とRMSの再計算
+                        double sumSq = 0.0;
+                        for (int k = 0; k < vectorSize; k++) {
+                            sumSq += x[k] * x[k];
+                        }
+                        double rms = Math.sqrt((sumSq / vectorSize) + 1e-5);
+                        double invRms = 1.0 / rms;
+
+                        // 1. RMSNormの重み（rmsWeightAttention）の勾配を計算
+                        for (int k = 0; k < vectorSize; k++) {
+                            double normedVal = x[k] * invRms;
+                            localDRmsWeightAttention[b][l][k] += dyNormed[k] * normedVal;
+                        }
+
+                        // 2. 入力 x に対する勾配を計算して、前の層（dFfnOutput または dInputEmbeddings）へ加算
+                        double sumTerm = 0.0;
+                        for (int k = 0; k < vectorSize; k++) {
+                            sumTerm += dyNormed[k] * rmsWeightAttention[l][k] * (x[k] * invRms);
+                        }
+
+                        for (int k = 0; k < vectorSize; k++) {
+                            double term1 = dyNormed[k] * rmsWeightAttention[l][k];
+                            double term2 = (x[k] * invRms) * sumTerm / vectorSize;
+                            double gradInputVal = invRms * (term1 - term2);
+
+                            if (l > 0) {
+                                dFfnOutput[b][l - 1][i][k] += gradInputVal;
+                            } else {
+                                dInputEmbeddings[b][i][k] += gradInputVal;
                             }
                         }
                     }
@@ -743,7 +860,7 @@ public class Main {
                     }
                 }
                 for (int l = 0; l < numLayers; l++) {
-                    // 【修正】Q, K, V の合算をヘッド数と head_size に対応させる
+                    // Q, K, V の合算をヘッド数と head_size に対応させる
                     for (int h = 0; h < num_heads; h++) {
                         for (int i = 0; i < vectorSize; i++) {
                             for (int j = 0; j < head_size; j++) {
@@ -753,6 +870,16 @@ public class Main {
                             }
                         }
                     }
+
+                    // ==========================================
+                    // RMSNormの重み勾配をグローバルに合算
+                    // ==========================================
+                    for (int i = 0; i < vectorSize; i++) {
+                        globalDRmsWeightAttention[l][i] += localDRmsWeightAttention[b][l][i];
+                        globalDRmsWeightFfn[l][i] += localDRmsWeightFfn[b][l][i];
+                    }
+
+
                     for (int i = 0; i < vectorSize; i++) {
                         for (int j = 0; j < dHidden; j++) {
                             globalDWGate[l][i][j] += localDWGate[b][l][i][j];
@@ -767,7 +894,7 @@ public class Main {
                 }
             }
 
-// ★ 追加：合算したグローバル勾配をバッチサイズで割って平均にする
+            // ★ 追加：合算したグローバル勾配をバッチサイズで割って平均にする
             double invBatchSize = 1.0 / batchSize;
             for (int i = 0; i < vectorSize; i++) {
                 for (int j = 0; j < vocabSize; j++) {
@@ -780,7 +907,7 @@ public class Main {
                 }
             }
             for (int l = 0; l < numLayers; l++) {
-                // 【修正】Q, K, V の平均化もヘッド数と head_size に対応させる
+                // Q, K, V の平均化もヘッド数と head_size に対応させる
                 for (int h = 0; h < num_heads; h++) {
                     for (int i = 0; i < vectorSize; i++) {
                         for (int j = 0; j < head_size; j++) {
@@ -790,6 +917,15 @@ public class Main {
                         }
                     }
                 }
+
+                // ==========================================
+                // 【追加】RMSNormの重み勾配の平均化
+                // ==========================================
+                for (int i = 0; i < vectorSize; i++) {
+                    globalDRmsWeightAttention[l][i] *= invBatchSize;
+                    globalDRmsWeightFfn[l][i] *= invBatchSize;
+                }
+
                 for (int i = 0; i < vectorSize; i++) {
                     for (int j = 0; j < dHidden; j++) {
                         globalDWGate[l][i][j] *= invBatchSize;
@@ -914,6 +1050,25 @@ public class Main {
                         wDown[l][i][j] = wDown[l][i][j] - learningRate * weightDecay * wDown[l][i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
                     }
                 }
+
+                // 4. 各レイヤーの RMSNorm の重み (rmsWeightAttention, rmsWeightFfn) の更新
+                for (int i = 0; i < vectorSize; i++) {
+                    // Attention側のRMSNorm重み更新
+                    double gAttn = globalDRmsWeightAttention[l][i];
+                    mRmsWeightAttention[l][i] = beta1 * mRmsWeightAttention[l][i] + (1.0 - beta1) * gAttn;
+                    vRmsWeightAttention[l][i] = beta2 * vRmsWeightAttention[l][i] + (1.0 - beta2) * (gAttn * gAttn);
+                    double mHatAttn = mRmsWeightAttention[l][i] / correction1;
+                    double vHatAttn = vRmsWeightAttention[l][i] / correction2;
+                    rmsWeightAttention[l][i] = rmsWeightAttention[l][i] - learningRate * weightDecay * rmsWeightAttention[l][i] - learningRate * mHatAttn / (Math.sqrt(vHatAttn) + eps);
+
+                    // FFN側のRMSNorm重み更新
+                    double gFfn = globalDRmsWeightFfn[l][i];
+                    mRmsWeightFfn[l][i] = beta1 * mRmsWeightFfn[l][i] + (1.0 - beta1) * gFfn;
+                    vRmsWeightFfn[l][i] = beta2 * vRmsWeightFfn[l][i] + (1.0 - beta2) * (gFfn * gFfn);
+                    double mHatFfn = mRmsWeightFfn[l][i] / correction1;
+                    double vHatFfn = vRmsWeightFfn[l][i] / correction2;
+                    rmsWeightFfn[l][i] = rmsWeightFfn[l][i] - learningRate * weightDecay * rmsWeightFfn[l][i] - learningRate * mHatFfn / (Math.sqrt(vHatFfn) + eps);
+                }
             }
 
             // Lossの計算と表示
@@ -964,15 +1119,21 @@ public class Main {
                 for (int l = 0; l < numLayers; l++) {
                     double[][] currentLayerInput = (l == 0) ? inputEmbeddings[0] : ffnOutput[0][l - 1];
 
+                    //RMSNorm
+                    double[][] normedInput = new double[genSeqLen][dModel];
+                    for (int i = 0; i < genSeqLen; i++) {
+                        normedInput[i] = rmsNorm(currentLayerInput[i], rmsWeightAttention[l], 1e-5);
+                    }
+
                     // 1. Q, K, V の計算（ヘッドごとに計算）
                     for (int h = 0; h < num_heads; h++) {
                         for (int i = 0; i < genSeqLen; i++) {
                             for (int j = 0; j < head_size; j++) {
                                 double sumQ = 0.0, sumK = 0.0, sumV = 0.0;
                                 for (int k = 0; k < dModel; k++) {
-                                    sumQ += currentLayerInput[i][k] * wq[l][h][k][j];
-                                    sumK += currentLayerInput[i][k] * wk[l][h][k][j];
-                                    sumV += currentLayerInput[i][k] * wv[l][h][k][j];
+                                    sumQ += normedInput[i][k] * wq[l][h][k][j];
+                                    sumK += normedInput[i][k] * wk[l][h][k][j];
+                                    sumV += normedInput[i][k] * wv[l][h][k][j];
                                 }
                                 query[0][l][i][h][j] = sumQ;
                                 key[0][l][i][h][j] = sumK;
@@ -1041,13 +1202,20 @@ public class Main {
                     }
 
 
+                    // ★【追加】FFNに入る前にRMSNormをかける
+                    double[][] normedAttentionOutput = new double[genSeqLen][dModel];
+                    for (int i = 0; i < genSeqLen; i++) {
+                        normedAttentionOutput[i] = rmsNorm(attentionOutput[0][l][i], rmsWeightFfn[l], 1e-5);
+                    }
+
+                    //FFN
                     for (int i = 0; i < genSeqLen; i++) {
                         double[] gate = new double[dHidden];
                         double[] up = new double[dHidden];
                         for (int j = 0; j < dHidden; j++) {
                             double sumGate = 0.0, sumUp = 0.0;
                             for (int k = 0; k < dModel; k++) {
-                                double val = attentionOutput[0][l][i][k];
+                                double val = normedAttentionOutput[i][k];
                                 sumGate += val * wGate[l][k][j];
                                 sumUp += val * wUp[l][k][j];
                             }
@@ -1127,5 +1295,21 @@ public class Main {
             }
             System.out.println();
         }
+    }
+
+    // RMSNormを計算するメソッドの例
+    public static double[] rmsNorm(double[] input, double[] weight, double eps) {
+        int dim = input.length;
+        double sumSq = 0.0;
+        for (int i = 0; i < dim; i++) {
+            sumSq += input[i] * input[i];
+        }
+        double rms = Math.sqrt(sumSq / dim + eps);
+
+        double[] output = new double[dim];
+        for (int i = 0; i < dim; i++) {
+            output[i] = (input[i] / rms) * weight[i];
+        }
+        return output;
     }
 }
