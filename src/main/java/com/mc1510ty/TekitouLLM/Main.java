@@ -59,10 +59,13 @@ public class Main {
         int mixEpochs = 100;      // 最後に両方をごちゃ混ぜにするミックス学習
 
         double learningRate = 0.0005; //学習率
-        int batchSize = 16; //並列数(String[]の中身がこの数字以下だと並列化が少なくなる)
+        int batchSize = 12; //並列数(String[]の中身がこの数字以下だと並列化が少なくなる)
 
         int targetVocabSize = 1200;
 
+        // 設定や初期化のイメージ
+        int num_heads = 8;               // ヘッド数
+        int head_size = vectorSize / num_heads; // 実際の dModel（96）をヘッド数で割る（96 / 8 = 12）
 
         int epochs = pretrainEpochs + chatEpochs + mixEpochs;
 
@@ -105,66 +108,69 @@ public class Main {
             }
         }
 
-        double[][][] wq = new double[numLayers][dModel][dModel];
-        double[][][] wk = new double[numLayers][dModel][dModel];
-        double[][][] wv = new double[numLayers][dModel][dModel];
-        double[][][] wGate = new double[numLayers][dModel][dHidden];
-        double[][][] wUp = new double[numLayers][dModel][dHidden];
-        double[][][] wDown = new double[numLayers][dHidden][dModel];
-        double[][] wOut = new double[dModel][vocabSizeLocal];
+// 重みの定義（マルチヘッド対応）
+        double[][][][] wq = new double[numLayers][num_heads][vectorSize][head_size];
+        double[][][][] wk = new double[numLayers][num_heads][vectorSize][head_size];
+        double[][][][] wv = new double[numLayers][num_heads][vectorSize][head_size];
+        double[][][] wGate = new double[numLayers][vectorSize][dHidden];
+        double[][][] wUp = new double[numLayers][vectorSize][dHidden];
+        double[][][] wDown = new double[numLayers][dHidden][vectorSize];
+        double[][] wOut = new double[vectorSize][vocabSizeLocal];
 
-        // 重みのランダム初期化
+// 重みのランダム初期化
         for (int l = 0; l < numLayers; l++) {
-            for (int i = 0; i < dModel; i++) {
-                for (int j = 0; j < dModel; j++) {
-                    wq[l][i][j] = (random.nextDouble() - 0.5) * 0.1;
-                    wk[l][i][j] = (random.nextDouble() - 0.5) * 0.1;
-                    wv[l][i][j] = (random.nextDouble() - 0.5) * 0.1;
+            for (int h = 0; h < num_heads; h++) {
+                for (int i = 0; i < vectorSize; i++) {
+                    for (int j = 0; j < head_size; j++) {
+                        wq[l][h][i][j] = (random.nextDouble() - 0.5) * 0.1;
+                        wk[l][h][i][j] = (random.nextDouble() - 0.5) * 0.1;
+                        wv[l][h][i][j] = (random.nextDouble() - 0.5) * 0.1;
+                    }
                 }
             }
-            for (int i = 0; i < dModel; i++) {
+            for (int i = 0; i < vectorSize; i++) {
                 for (int j = 0; j < dHidden; j++) {
                     wGate[l][i][j] = (random.nextDouble() - 0.5) * 0.1;
                     wUp[l][i][j] = (random.nextDouble() - 0.5) * 0.1;
                 }
             }
             for (int i = 0; i < dHidden; i++) {
-                for (int j = 0; j < dModel; j++) {
+                for (int j = 0; j < vectorSize; j++) {
                     wDown[l][i][j] = (random.nextDouble() - 0.5) * 0.1;
                 }
             }
         }
-        for (int i = 0; i < dModel; i++) {
+        for (int i = 0; i < vectorSize; i++) {
             for (int j = 0; j < vocabSizeLocal; j++) {
                 wOut[i][j] = (random.nextDouble() - 0.5) * 0.1;
             }
         }
 
-        // --- グローバル勾配（全スレッドの結果を最終的に合算する場所） ---
+// --- グローバル勾配（全スレッドの結果を最終的に合算する場所） ---
         double[][] globalDWOut = new double[vectorSize][vocabSize];
         double[][][] globalDWGate = new double[numLayers][vectorSize][vectorSize * 2];
         double[][][] globalDWUp = new double[numLayers][vectorSize][vectorSize * 2];
         double[][][] globalDWDown = new double[numLayers][vectorSize * 2][vectorSize];
-        double[][][] globalDWq = new double[numLayers][vectorSize][vectorSize];
-        double[][][] globalDWk = new double[numLayers][vectorSize][vectorSize];
-        double[][][] globalDWv = new double[numLayers][vectorSize][vectorSize];
+// Q, K, V のグローバル勾配もヘッド対応に
+        double[][][][] globalDWq = new double[numLayers][num_heads][vectorSize][head_size];
+        double[][][][] globalDWk = new double[numLayers][num_heads][vectorSize][head_size];
+        double[][][][] globalDWv = new double[numLayers][num_heads][vectorSize][head_size];
         double[][] globalDEmbeddingTable = new double[vocabSize][vectorSize];
 
-
-
-        // --- AdamW用のモーメント配列（1次モーメント m, 2次モーメント v）の用意 ---
+// --- AdamW用のモーメント配列（1次モーメント m, 2次モーメント v）の用意 ---
         double[][] mDWOut = new double[vectorSize][vocabSize];
         double[][] vDWOut = new double[vectorSize][vocabSize];
 
         double[][] mDEmbeddingTable = new double[vocabSize][vectorSize];
         double[][] vDEmbeddingTable = new double[vocabSize][vectorSize];
 
-        double[][][] mDWq = new double[numLayers][vectorSize][vectorSize];
-        double[][][] vDWq = new double[numLayers][vectorSize][vectorSize];
-        double[][][] mDWk = new double[numLayers][vectorSize][vectorSize];
-        double[][][] vDWk = new double[numLayers][vectorSize][vectorSize];
-        double[][][] mDWv = new double[numLayers][vectorSize][vectorSize];
-        double[][][] vDWv = new double[numLayers][vectorSize][vectorSize];
+// AdamW用の Q, K, V モーメントもヘッド対応に
+        double[][][][] mDWq = new double[numLayers][num_heads][vectorSize][head_size];
+        double[][][][] vDWq = new double[numLayers][num_heads][vectorSize][head_size];
+        double[][][][] mDWk = new double[numLayers][num_heads][vectorSize][head_size];
+        double[][][][] vDWk = new double[numLayers][num_heads][vectorSize][head_size];
+        double[][][][] mDWv = new double[numLayers][num_heads][vectorSize][head_size];
+        double[][][][] vDWv = new double[numLayers][num_heads][vectorSize][head_size];
 
         double[][][] mDWGate = new double[numLayers][vectorSize][dHidden];
         double[][][] vDWGate = new double[numLayers][vectorSize][dHidden];
@@ -174,17 +180,15 @@ public class Main {
         double[][][] mDWDown = new double[numLayers][dHidden][vectorSize];
         double[][][] vDWDown = new double[numLayers][dHidden][vectorSize];
 
-
-
-
-        // --- ローカル勾配（各スレッドが自分専用に使う作業机：一番左に batchSize が付く） ---
+// --- ローカル勾配（各スレッドが自分専用に使う作業机） ---
         double[][][] localDWOut = new double[batchSize][vectorSize][vocabSize];
         double[][][][] localDWGate = new double[batchSize][numLayers][vectorSize][vectorSize * 2];
         double[][][][] localDWUp = new double[batchSize][numLayers][vectorSize][vectorSize * 2];
         double[][][][] localDWDown = new double[batchSize][numLayers][vectorSize * 2][vectorSize];
-        double[][][][] localDWq = new double[batchSize][numLayers][vectorSize][vectorSize];
-        double[][][][] localDWk = new double[batchSize][numLayers][vectorSize][vectorSize];
-        double[][][][] localDWv = new double[batchSize][numLayers][vectorSize][vectorSize];
+// ローカルの Q, K, V 勾配もヘッド対応に
+        double[][][][][] localDWq = new double[batchSize][numLayers][num_heads][vectorSize][head_size];
+        double[][][][][] localDWk = new double[batchSize][numLayers][num_heads][vectorSize][head_size];
+        double[][][][][] localDWv = new double[batchSize][numLayers][num_heads][vectorSize][head_size];
         double[][][] localDEmbeddingTable = new double[batchSize][vocabSize][vectorSize];
 
         double[] invFreq = new double[vectorSize];
@@ -195,23 +199,26 @@ public class Main {
 
         double[][][] inputEmbeddings = new double[batchSize][maxSeqLen][vectorSize];
 
-        // --- バッチ対応させた作業スペース ---
-        double[][][][] query = new double[batchSize][numLayers][maxSeqLen][dModel];
-        double[][][][] key = new double[batchSize][numLayers][maxSeqLen][dModel];
-        double[][][][] value = new double[batchSize][numLayers][maxSeqLen][dModel];
-        double[][][][] attentionScores = new double[batchSize][numLayers][maxSeqLen][maxSeqLen];
-        double[][][][] attentionWeights = new double[batchSize][numLayers][maxSeqLen][maxSeqLen];
-        double[][][][] attentionOutput = new double[batchSize][numLayers][maxSeqLen][dModel];
-        double[][][][] ffnOutput = new double[batchSize][numLayers][maxSeqLen][dModel];
+// --- バッチ対応・マルチヘッド対応させた作業スペース ---
+        double[][][][][] query = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
+        double[][][][][] key   = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
+        double[][][][][] value = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
 
-        double[][][][] dFfnOutput = new double[batchSize][numLayers][maxSeqLen][dModel];
-        double[][][][] dAttentionOutput = new double[batchSize][numLayers][maxSeqLen][dModel];
-        double[][][][] dAttentionWeights = new double[batchSize][numLayers][maxSeqLen][maxSeqLen];
-        double[][][][] dValue = new double[batchSize][numLayers][maxSeqLen][dModel];
-        double[][][][] dAttentionScores = new double[batchSize][numLayers][maxSeqLen][maxSeqLen];
-        double[][][][] dQuery = new double[batchSize][numLayers][maxSeqLen][dModel];
-        double[][][][] dKey = new double[batchSize][numLayers][maxSeqLen][dModel];
-        double[][][] dInputEmbeddings = new double[batchSize][maxSeqLen][dModel];
+// アテンション関連のスコアや重みもヘッド数（num_heads）を追加
+        double[][][][][] attentionScores = new double[batchSize][numLayers][num_heads][maxSeqLen][maxSeqLen];
+        double[][][][][] attentionWeights = new double[batchSize][numLayers][num_heads][maxSeqLen][maxSeqLen];
+
+        double[][][][] attentionOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
+        double[][][][] ffnOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
+
+        double[][][][] dFfnOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
+        double[][][][] dAttentionOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
+        double[][][][][] dAttentionWeights = new double[batchSize][numLayers][num_heads][maxSeqLen][maxSeqLen];
+        double[][][][][] dValue = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
+        double[][][][][] dAttentionScores = new double[batchSize][numLayers][num_heads][maxSeqLen][maxSeqLen];
+        double[][][][][] dQuery = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
+        double[][][][][] dKey = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
+        double[][][] dInputEmbeddings = new double[batchSize][maxSeqLen][vectorSize];
 
 
         System.out.println("=== 学習開始 ===");
@@ -219,7 +226,6 @@ public class Main {
         int epochstatus = 0;
 
         for (int epoch = 0; epoch < epochs; epoch++) {
-
 
             String[] currentDataset;
             if (epoch < pretrainEpochs) {
@@ -247,11 +253,8 @@ public class Main {
                 indices[i] = i;
             }
             List<Integer> indexList = Arrays.asList(indices);
-            Collections.shuffle(indexList, random); // 最初に用意した random を使います
+            Collections.shuffle(indexList, random);
             Integer[] shuffledIndices = indexList.toArray(new Integer[0]);
-
-
-
 
             // --- 1. グローバル勾配のゼロクリア ---
             for (double[] row : globalDWOut) Arrays.fill(row, 0.0);
@@ -259,9 +262,9 @@ public class Main {
             for (double[][] matrix : globalDWGate) for (double[] row : matrix) Arrays.fill(row, 0.0);
             for (double[][] matrix : globalDWUp) for (double[] row : matrix) Arrays.fill(row, 0.0);
             for (double[][] matrix : globalDWDown) for (double[] row : matrix) Arrays.fill(row, 0.0);
-            for (double[][] matrix : globalDWq) for (double[] row : matrix) Arrays.fill(row, 0.0);
-            for (double[][] matrix : globalDWk) for (double[] row : matrix) Arrays.fill(row, 0.0);
-            for (double[][] matrix : globalDWv) for (double[] row : matrix) Arrays.fill(row, 0.0);
+            for (double[][][] tensor : globalDWq) for (double[][] matrix : tensor) for (double[] row : matrix) Arrays.fill(row, 0.0);
+            for (double[][][] tensor : globalDWk) for (double[][] matrix : tensor) for (double[] row : matrix) Arrays.fill(row, 0.0);
+            for (double[][][] tensor : globalDWv) for (double[][] matrix : tensor) for (double[] row : matrix) Arrays.fill(row, 0.0);
 
             // --- 2. 各スレッド（ローカル）の勾配もゼロクリア ---
             for (int b = 0; b < batchSize; b++) {
@@ -270,10 +273,11 @@ public class Main {
                 for (double[][] matrix : localDWGate[b]) for (double[] row : matrix) Arrays.fill(row, 0.0);
                 for (double[][] matrix : localDWUp[b]) for (double[] row : matrix) Arrays.fill(row, 0.0);
                 for (double[][] matrix : localDWDown[b]) for (double[] row : matrix) Arrays.fill(row, 0.0);
-                for (double[][] matrix : localDWq[b]) for (double[] row : matrix) Arrays.fill(row, 0.0);
-                for (double[][] matrix : localDWk[b]) for (double[] row : matrix) Arrays.fill(row, 0.0);
-                for (double[][] matrix : localDWv[b]) for (double[] row : matrix) Arrays.fill(row, 0.0);
+                for (double[][][] tensor : localDWq[b]) for (double[][] matrix : tensor) for (double[] row : matrix) Arrays.fill(row, 0.0);
+                for (double[][][] tensor : localDWk[b]) for (double[][] matrix : tensor) for (double[] row : matrix) Arrays.fill(row, 0.0);
+                for (double[][][] tensor : localDWv[b]) for (double[][] matrix : tensor) for (double[] row : matrix) Arrays.fill(row, 0.0);
             }
+
 
             // バッチ全体の損失を記録する用（スレッドセーフな加算器）
             java.util.concurrent.atomic.DoubleAdder epochTotalLoss = new java.util.concurrent.atomic.DoubleAdder();
@@ -329,84 +333,105 @@ public class Main {
                     }
                 }
 
+
                 // --- 順伝播 ---
                 for (int l = 0; l < numLayers; l++) {
                     final int layer = l;
                     double[][] currentLayerInput = (layer == 0) ? inputEmbeddings[b] : ffnOutput[b][layer - 1];
 
                     // 6. Query (Q)
-                    for (int i = 0; i < seqLen; i++) {
-                        for (int j = 0; j < dModel; j++) {
+                    for (int h = 0; h < num_heads; h++) {
+                        for (int i = 0; i < seqLen; i++) {
+                            for (int j = 0; j < head_size; j++) {
+                                double sum = 0.0;
+                                for (int k = 0; k < dModel; k++) {
+                                    sum += currentLayerInput[i][k] * wq[layer][h][k][j];
+                                }
+                                query[b][layer][i][h][j] = sum;
+                            }
+                        }
+                    }
+
+                    // 7. Key (K) ※ j < dModel から head_size に修正しています
+                    for (int h = 0; h < num_heads; h++) {
+                        for (int i = 0; i < seqLen; i++) {
+                            for (int j = 0; j < head_size; j++) { // ← head_sizeに変更
+                                double sum = 0.0;
+                                for (int k = 0; k < dModel; k++) {
+                                    sum += currentLayerInput[i][k] * wk[layer][h][k][j];
+                                }
+                                key[b][layer][i][h][j] = sum;
+                            }
+                        }
+                    }
+
+                    // 8. Value (V) ※こちらも同様に head_size に修正
+                    for (int h = 0; h < num_heads; h++) {
+                        for (int i = 0; i < seqLen; i++) {
+                            for (int j = 0; j < head_size; j++) { // ← head_sizeに変更
+                                double sum = 0.0;
+                                for (int k = 0; k < dModel; k++) {
+                                    sum += currentLayerInput[i][k] * wv[layer][h][k][j];
+                                }
+                                value[b][layer][i][h][j] = sum;
+                            }
+                        }
+                    }
+
+                    // 9. Attention スコア（ヘッドごとに計算）
+                    double scale = Math.sqrt(head_size); // ★全体のdModelではなく、head_sizeの平方根にする
+
+                    for (int h = 0; h < num_heads; h++) { // ヘッドのループを追加
+                        for (int i = 0; i < seqLen; i++) {
+                            // attentionScores もヘッドごとの次元を持つように形を変える必要があります
+                            Arrays.fill(attentionScores[b][layer][h][i], 0, seqLen, -1e9);
+                            for (int j = 0; j <= i; j++) {
+                                double dotProduct = 0.0;
+                                for (int k = 0; k < head_size; k++) { // 内積はヘッド内の次元（head_size）で計算
+                                    dotProduct += query[b][layer][i][h][k] * key[b][layer][j][h][k];
+                                }
+                                attentionScores[b][layer][h][i][j] = dotProduct / scale;
+                            }
+                        }
+                    }
+
+// 10. Softmax（ヘッドごとに独立して計算）
+                    for (int h = 0; h < num_heads; h++) { // ヘッドのループを追加
+                        for (int i = 0; i < seqLen; i++) {
+                            double max = attentionScores[b][layer][h][i][0];
+                            for (int j = 1; j < seqLen; j++) {
+                                if (attentionScores[b][layer][h][i][j] > max) {
+                                    max = attentionScores[b][layer][h][i][j];
+                                }
+                            }
                             double sum = 0.0;
-                            for (int k = 0; k < dModel; k++) {
-                                sum += currentLayerInput[i][k] * wq[layer][k][j];
+                            double[] expRow = new double[seqLen];
+                            for (int j = 0; j < seqLen; j++) {
+                                expRow[j] = Math.exp(attentionScores[b][layer][h][i][j] - max);
+                                sum += expRow[j];
                             }
-                            query[b][layer][i][j] = sum;
+                            for (int j = 0; j < seqLen; j++) {
+                                attentionWeights[b][layer][h][i][j] = expRow[j] / sum;
+                            }
                         }
                     }
 
-                    // 7. Key (K)
+// 11. Attention Output（各ヘッドの結果を Concatenate して元の次元に戻す ＋ 残差接続）
                     for (int i = 0; i < seqLen; i++) {
-                        for (int j = 0; j < dModel; j++) {
-                            double sum = 0.0;
-                            for (int k = 0; k < dModel; k++) {
-                                sum += currentLayerInput[i][k] * wk[layer][k][j];
-                            }
-                            key[b][layer][i][j] = sum;
-                        }
-                    }
-
-                    // 8. Value (V)
-                    for (int i = 0; i < seqLen; i++) {
-                        for (int j = 0; j < dModel; j++) {
-                            double sum = 0.0;
-                            for (int k = 0; k < dModel; k++) {
-                                sum += currentLayerInput[i][k] * wv[layer][k][j];
-                            }
-                            value[b][layer][i][j] = sum;
-                        }
-                    }
-
-                    // 9. Attention スコア
-                    double scale = Math.sqrt(dModel);
-                    for (int i = 0; i < seqLen; i++) {
-                        Arrays.fill(attentionScores[b][layer][i], 0, seqLen, -1e9);
-                        for (int j = 0; j <= i; j++) {
-                            double dotProduct = 0.0;
-                            for (int k = 0; k < dModel; k++) {
-                                dotProduct += query[b][layer][i][k] * key[b][layer][j][k];
-                            }
-                            attentionScores[b][layer][i][j] = dotProduct / scale;
-                        }
-                    }
-
-                    // 10. Softmax
-                    for (int i = 0; i < seqLen; i++) {
-                        double max = attentionScores[b][layer][i][0];
-                        for (int j = 1; j < seqLen; j++) {
-                            if (attentionScores[b][layer][i][j] > max) {
-                                max = attentionScores[b][layer][i][j];
+                        int outCol = 0; // 結合していくときのインデックス用
+                        for (int h = 0; h < num_heads; h++) {
+                            for (int j = 0; j < head_size; j++) {
+                                double weightedSum = 0.0;
+                                for (int k = 0; k < seqLen; k++) {
+                                    weightedSum += attentionWeights[b][layer][h][i][k] * value[b][layer][k][h][j];
+                                }
+                                // 各ヘッドの計算結果を横に繋ぎ合わせていく（Concat）
+                                attentionOutput[b][layer][i][outCol++] = weightedSum;
                             }
                         }
-                        double sum = 0.0;
-                        double[] expRow = new double[seqLen];
-                        for (int j = 0; j < seqLen; j++) {
-                            expRow[j] = Math.exp(attentionScores[b][layer][i][j] - max);
-                            sum += expRow[j];
-                        }
-                        for (int j = 0; j < seqLen; j++) {
-                            attentionWeights[b][layer][i][j] = expRow[j] / sum;
-                        }
-                    }
-
-                    // 11. Attention Output
-                    for (int i = 0; i < seqLen; i++) {
-                        for (int j = 0; j < dModel; j++) {
-                            double weightedSum = 0.0;
-                            for (int k = 0; k < seqLen; k++) {
-                                weightedSum += attentionWeights[b][layer][i][k] * value[b][layer][k][j];
-                            }
-                            attentionOutput[b][layer][i][j] = weightedSum + currentLayerInput[i][j];
+                        // 残差接続（Residual Connection）：入力層のベクトルをそのまま足し合わせる
+                        for (int j = 0; j < vectorSize; j++) {
+                            attentionOutput[b][layer][i][j] += currentLayerInput[i][j];
                         }
                     }
 
@@ -448,13 +473,18 @@ public class Main {
                     for (int i = 0; i < seqLen; i++) {
                         Arrays.fill(dFfnOutput[b][l][i], 0.0);
                         Arrays.fill(dAttentionOutput[b][l][i], 0.0);
-                        Arrays.fill(dQuery[b][l][i], 0.0);
-                        Arrays.fill(dKey[b][l][i], 0.0);
-                        Arrays.fill(dValue[b][l][i], 0.0);
                     }
-                    for (int i = 0; i < seqLen; i++) {
-                        Arrays.fill(dAttentionWeights[b][l][i], 0.0);
-                        Arrays.fill(dAttentionScores[b][l][i], 0.0);
+                    // 【修正】ヘッド数を含む配列の初期化
+                    for (int h = 0; h < num_heads; h++) {
+                        for (int i = 0; i < seqLen; i++) {
+                            Arrays.fill(dQuery[b][l][i][h], 0.0);
+                            Arrays.fill(dKey[b][l][i][h], 0.0);
+                            Arrays.fill(dValue[b][l][i][h], 0.0);
+                        }
+                        for (int i = 0; i < seqLen; i++) {
+                            Arrays.fill(dAttentionWeights[b][l][h][i], 0.0);
+                            Arrays.fill(dAttentionScores[b][l][h][i], 0.0);
+                        }
                     }
                 }
                 for (int i = 0; i < seqLen; i++) {
@@ -587,47 +617,59 @@ public class Main {
                         }
                     }
 
+// 1. Attention Output から Attention Weights と Value への勾配（Concatをバラす）
                     for (int i = 0; i < seqLen; i++) {
-                        for (int j = 0; j < dModel; j++) {
-                            double gradOut = dAttentionOutput[b][l][i][j];
+                        for (int h = 0; h < num_heads; h++) {
+                            for (int j = 0; j < head_size; j++) {
+                                int outCol = h * head_size + j;
+                                double gradOut = dAttentionOutput[b][l][i][outCol];
+                                for (int k = 0; k < seqLen; k++) {
+                                    dAttentionWeights[b][l][h][i][k] += gradOut * value[b][l][k][h][j];
+                                    dValue[b][l][k][h][j] += gradOut * attentionWeights[b][l][h][i][k];
+                                }
+                            }
+                        }
+                    }
+
+// 2. Softmax の逆伝播（ヘッドごとに計算）
+                    for (int h = 0; h < num_heads; h++) {
+                        for (int i = 0; i < seqLen; i++) {
+                            double dotSumWeights = 0.0;
                             for (int k = 0; k < seqLen; k++) {
-                                dAttentionWeights[b][l][i][k] += gradOut * value[b][l][k][j];
-                                dValue[b][l][k][j] += gradOut * attentionWeights[b][l][i][k];
+                                dotSumWeights += dAttentionWeights[b][l][h][i][k] * attentionWeights[b][l][h][i][k];
+                            }
+
+                            for (int j = 0; j < seqLen; j++) {
+                                double y_j = attentionWeights[b][l][h][i][j];
+                                dAttentionScores[b][l][h][i][j] = y_j * (dAttentionWeights[b][l][h][i][j] - dotSumWeights);
+                            }
+                        }
+
+                        // マスク処理（未来の情報を隠すための因果マスクの逆伝播対応）
+                        for (int i = 0; i < seqLen; i++) {
+                            for (int j = 0; j < seqLen; j++) {
+                                if (j > i) dAttentionScores[b][l][h][i][j] = 0.0;
                             }
                         }
                     }
 
-                    for (int i = 0; i < seqLen; i++) {
-                        double dotSumWeights = 0.0;
-                        for (int k = 0; k < seqLen; k++) {
-                            dotSumWeights += dAttentionWeights[b][l][i][k] * attentionWeights[b][l][i][k];
-                        }
-
-                        for (int j = 0; j < seqLen; j++) {
-                            double y_j = attentionWeights[b][l][i][j];
-                            dAttentionScores[b][l][i][j] = y_j * (dAttentionWeights[b][l][i][j] - dotSumWeights);
-                        }
-                    }
-
-                    for (int i = 0; i < seqLen; i++) {
-                        for (int j = 0; j < seqLen; j++) {
-                            if (j > i) dAttentionScores[b][l][i][j] = 0.0;
-                        }
-                    }
-
-                    double scale = Math.sqrt(dModel);
-                    for (int i = 0; i < seqLen; i++) {
-                        for (int j = 0; j < seqLen; j++) {
-                            double dScore = dAttentionScores[b][l][i][j] / scale;
-                            for (int k = 0; k < dModel; k++) {
-                                dQuery[b][l][i][k] += dScore * key[b][l][j][k];
-                                dKey[b][l][j][k] += dScore * query[b][l][i][k];
+// 3. Query と Key への勾配計算（ヘッドごと、scaleは head_size の平方根）
+                    double scale = Math.sqrt(head_size);
+                    for (int h = 0; h < num_heads; h++) {
+                        for (int i = 0; i < seqLen; i++) {
+                            for (int j = 0; j < seqLen; j++) {
+                                double dScore = dAttentionScores[b][l][h][i][j] / scale;
+                                for (int k = 0; k < head_size; k++) {
+                                    dQuery[b][l][i][h][k] += dScore * key[b][l][j][h][k];
+                                    dKey[b][l][j][h][k] += dScore * query[b][l][i][h][k];
+                                }
                             }
                         }
                     }
 
+// 4. 残差接続の勾配（Attention Output から入力側へそのまま流す）
                     for (int i = 0; i < seqLen; i++) {
-                        for (int k = 0; k < dModel; k++) {
+                        for (int k = 0; k < vectorSize; k++) {
                             double gradOut = dAttentionOutput[b][l][i][k];
                             if (l > 0) {
                                 dFfnOutput[b][l - 1][i][k] += gradOut;
@@ -637,51 +679,58 @@ public class Main {
                         }
                     }
 
+// 5. Query と Value の重み勾配（wq, wv）と、入力への勾配計算
                     for (int i = 0; i < seqLen; i++) {
-                        for (int j = 0; j < dModel; j++) {
-                            double gQ = dQuery[b][l][i][j];
-                            double gV = dValue[b][l][i][j];
+                        for (int h = 0; h < num_heads; h++) {
+                            for (int j = 0; j < head_size; j++) {
+                                double gQ = dQuery[b][l][i][h][j];
+                                double gV = dValue[b][l][i][h][j];
 
-                            for (int k = 0; k < dModel; k++) {
-                                localDWq[b][l][k][j] += currentLayerInput[i][k] * gQ;
-                                localDWv[b][l][k][j] += currentLayerInput[i][k] * gV;
+                                for (int k = 0; k < vectorSize; k++) {
+                                    localDWq[b][l][h][k][j] += currentLayerInput[i][k] * gQ;
+                                    localDWv[b][l][h][k][j] += currentLayerInput[i][k] * gV;
 
-                                double gradInputVal = gQ * wq[l][k][j] + gV * wv[l][k][j];
-                                if (l > 0) {
-                                    dFfnOutput[b][l - 1][i][k] += gradInputVal;
-                                } else {
-                                    dInputEmbeddings[b][i][k] += gradInputVal;
+                                    // 各ヘッドの重みを通した入力への勾配を加算
+                                    double gradInputVal = gQ * wq[l][h][k][j] + gV * wv[l][h][k][j];
+                                    if (l > 0) {
+                                        dFfnOutput[b][l - 1][i][k] += gradInputVal;
+                                    } else {
+                                        dInputEmbeddings[b][i][k] += gradInputVal;
+                                    }
                                 }
                             }
                         }
                     }
 
+// 6. Key の重み勾配（wk）と、入力への勾配計算
                     for (int j = 0; j < seqLen; j++) {
-                        for (int k = 0; k < dModel; k++) {
-                            double gK = dKey[b][l][j][k];
-                            for (int m = 0; m < dModel; m++) {
-                                localDWk[b][l][m][k] += currentLayerInput[j][m] * gK;
-                                double gradInputValK = gK * wk[l][m][k];
-                                if (l > 0) {
-                                    dFfnOutput[b][l - 1][j][m] += gradInputValK;
-                                } else {
-                                    dInputEmbeddings[b][j][m] += gradInputValK;
+                        for (int h = 0; h < num_heads; h++) {
+                            for (int k = 0; k < head_size; k++) {
+                                double gK = dKey[b][l][j][h][k];
+                                for (int m = 0; m < vectorSize; m++) {
+                                    localDWk[b][l][h][m][k] += currentLayerInput[j][m] * gK;
+
+                                    double gradInputValK = gK * wk[l][h][m][k];
+                                    if (l > 0) {
+                                        dFfnOutput[b][l - 1][j][m] += gradInputValK;
+                                    } else {
+                                        dInputEmbeddings[b][j][m] += gradInputValK;
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                // 埋め込み層への勾配蓄積
-                for (int i = 0; i < seqLen; i++) {
-                    int id = encoded[i];
-                    for (int j = 0; j < vectorSize; j++) {
-                        localDEmbeddingTable[b][id][j] += dInputEmbeddings[b][i][j];
+// 7. 埋め込み層への勾配蓄積
+                    for (int i = 0; i < seqLen; i++) {
+                        int id = encoded[i];
+                        for (int j = 0; j < vectorSize; j++) {
+                            localDEmbeddingTable[b][id][j] += dInputEmbeddings[b][i][j];
+                        }
                     }
                 }
             });
-
-            // --- 4. 16個のローカル勾配をグローバル勾配に合算する ---
+// --- 4. ローカル勾配をグローバル勾配に合算する ---
             for (int b = 0; b < batchSize; b++) {
                 for (int i = 0; i < vectorSize; i++) {
                     for (int j = 0; j < vocabSize; j++) {
@@ -694,11 +743,14 @@ public class Main {
                     }
                 }
                 for (int l = 0; l < numLayers; l++) {
-                    for (int i = 0; i < vectorSize; i++) {
-                        for (int j = 0; j < vectorSize; j++) {
-                            globalDWq[l][i][j] += localDWq[b][l][i][j];
-                            globalDWk[l][i][j] += localDWk[b][l][i][j];
-                            globalDWv[l][i][j] += localDWv[b][l][i][j];
+                    // 【修正】Q, K, V の合算をヘッド数と head_size に対応させる
+                    for (int h = 0; h < num_heads; h++) {
+                        for (int i = 0; i < vectorSize; i++) {
+                            for (int j = 0; j < head_size; j++) {
+                                globalDWq[l][h][i][j] += localDWq[b][l][h][i][j];
+                                globalDWk[l][h][i][j] += localDWk[b][l][h][i][j];
+                                globalDWv[l][h][i][j] += localDWv[b][l][h][i][j];
+                            }
                         }
                     }
                     for (int i = 0; i < vectorSize; i++) {
@@ -715,7 +767,7 @@ public class Main {
                 }
             }
 
-            // ★ 追加：合算したグローバル勾配をバッチサイズで割って平均にする
+// ★ 追加：合算したグローバル勾配をバッチサイズで割って平均にする
             double invBatchSize = 1.0 / batchSize;
             for (int i = 0; i < vectorSize; i++) {
                 for (int j = 0; j < vocabSize; j++) {
@@ -728,11 +780,14 @@ public class Main {
                 }
             }
             for (int l = 0; l < numLayers; l++) {
-                for (int i = 0; i < vectorSize; i++) {
-                    for (int j = 0; j < vectorSize; j++) {
-                        globalDWq[l][i][j] *= invBatchSize;
-                        globalDWk[l][i][j] *= invBatchSize;
-                        globalDWv[l][i][j] *= invBatchSize;
+                // 【修正】Q, K, V の平均化もヘッド数と head_size に対応させる
+                for (int h = 0; h < num_heads; h++) {
+                    for (int i = 0; i < vectorSize; i++) {
+                        for (int j = 0; j < head_size; j++) {
+                            globalDWq[l][h][i][j] *= invBatchSize;
+                            globalDWk[l][h][i][j] *= invBatchSize;
+                            globalDWv[l][h][i][j] *= invBatchSize;
+                        }
                     }
                 }
                 for (int i = 0; i < vectorSize; i++) {
@@ -784,39 +839,48 @@ public class Main {
 
             // 3. 各レイヤーの重み (wq, wk, wv, wGate, wUp, wDown) の更新
             for (int l = 0; l < numLayers; l++) {
-                // wq
-                for (int i = 0; i < dModel; i++) {
-                    for (int j = 0; j < dModel; j++) {
-                        double g = globalDWq[l][i][j];
-                        mDWq[l][i][j] = beta1 * mDWq[l][i][j] + (1.0 - beta1) * g;
-                        vDWq[l][i][j] = beta2 * vDWq[l][i][j] + (1.0 - beta2) * (g * g);
-                        double mHat = mDWq[l][i][j] / correction1;
-                        double vHat = vDWq[l][i][j] / correction2;
-                        wq[l][i][j] = wq[l][i][j] - learningRate * weightDecay * wq[l][i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
+                // wq の更新（ヘッド数と head_size に対応）
+                for (int h = 0; h < num_heads; h++) {
+                    for (int i = 0; i < vectorSize; i++) {
+                        for (int j = 0; j < head_size; j++) {
+                            double g = globalDWq[l][h][i][j];
+                            mDWq[l][h][i][j] = beta1 * mDWq[l][h][i][j] + (1.0 - beta1) * g;
+                            vDWq[l][h][i][j] = beta2 * vDWq[l][h][i][j] + (1.0 - beta2) * (g * g);
+                            double mHat = mDWq[l][h][i][j] / correction1;
+                            double vHat = vDWq[l][h][i][j] / correction2;
+                            wq[l][h][i][j] = wq[l][h][i][j] - learningRate * weightDecay * wq[l][h][i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
+                        }
                     }
                 }
-                // wk
-                for (int i = 0; i < dModel; i++) {
-                    for (int j = 0; j < dModel; j++) {
-                        double g = globalDWk[l][i][j];
-                        mDWk[l][i][j] = beta1 * mDWk[l][i][j] + (1.0 - beta1) * g;
-                        vDWk[l][i][j] = beta2 * vDWk[l][i][j] + (1.0 - beta2) * (g * g);
-                        double mHat = mDWk[l][i][j] / correction1;
-                        double vHat = vDWk[l][i][j] / correction2;
-                        wk[l][i][j] = wk[l][i][j] - learningRate * weightDecay * wk[l][i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
+
+                // wk の更新（ヘッド数と head_size に対応）
+                for (int h = 0; h < num_heads; h++) {
+                    for (int i = 0; i < vectorSize; i++) {
+                        for (int j = 0; j < head_size; j++) {
+                            double g = globalDWk[l][h][i][j];
+                            mDWk[l][h][i][j] = beta1 * mDWk[l][h][i][j] + (1.0 - beta1) * g;
+                            vDWk[l][h][i][j] = beta2 * vDWk[l][h][i][j] + (1.0 - beta2) * (g * g);
+                            double mHat = mDWk[l][h][i][j] / correction1;
+                            double vHat = vDWk[l][h][i][j] / correction2;
+                            wk[l][h][i][j] = wk[l][h][i][j] - learningRate * weightDecay * wk[l][h][i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
+                        }
                     }
                 }
-                // wv
-                for (int i = 0; i < dModel; i++) {
-                    for (int j = 0; j < dModel; j++) {
-                        double g = globalDWv[l][i][j];
-                        mDWv[l][i][j] = beta1 * mDWv[l][i][j] + (1.0 - beta1) * g;
-                        vDWv[l][i][j] = beta2 * vDWv[l][i][j] + (1.0 - beta2) * (g * g);
-                        double mHat = mDWv[l][i][j] / correction1;
-                        double vHat = vDWv[l][i][j] / correction2;
-                        wv[l][i][j] = wv[l][i][j] - learningRate * weightDecay * wv[l][i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
+
+                // wv の更新（ヘッド数と head_size に対応）
+                for (int h = 0; h < num_heads; h++) {
+                    for (int i = 0; i < vectorSize; i++) {
+                        for (int j = 0; j < head_size; j++) {
+                            double g = globalDWv[l][h][i][j];
+                            mDWv[l][h][i][j] = beta1 * mDWv[l][h][i][j] + (1.0 - beta1) * g;
+                            vDWv[l][h][i][j] = beta2 * vDWv[l][h][i][j] + (1.0 - beta2) * (g * g);
+                            double mHat = mDWv[l][h][i][j] / correction1;
+                            double vHat = vDWv[l][h][i][j] / correction2;
+                            wv[l][h][i][j] = wv[l][h][i][j] - learningRate * weightDecay * wv[l][h][i][j] - learningRate * mHat / (Math.sqrt(vHat) + eps);
+                        }
                     }
                 }
+
                 // wGate
                 for (int i = 0; i < dModel; i++) {
                     for (int j = 0; j < dHidden; j++) {
@@ -897,68 +961,85 @@ public class Main {
                         }
                     }
                 }
-
                 for (int l = 0; l < numLayers; l++) {
                     double[][] currentLayerInput = (l == 0) ? inputEmbeddings[0] : ffnOutput[0][l - 1];
 
-                    for (int i = 0; i < genSeqLen; i++) {
-                        for (int j = 0; j < dModel; j++) {
-                            double sumQ = 0.0, sumK = 0.0, sumV = 0.0;
-                            for (int k = 0; k < dModel; k++) {
-                                sumQ += currentLayerInput[i][k] * wq[l][k][j];
-                                sumK += currentLayerInput[i][k] * wk[l][k][j];
-                                sumV += currentLayerInput[i][k] * wv[l][k][j];
-                            }
-                            query[0][l][i][j] = sumQ;
-                            key[0][l][i][j] = sumK;
-                            value[0][l][i][j] = sumV;
-                        }
-                    }
-
-                    double scale = Math.sqrt(dModel);
-                    for (int i = 0; i < genSeqLen; i++) {
-                        for (int j = 0; j < genSeqLen; j++) {
-                            if (j > i) {
-                                attentionScores[0][l][i][j] = -1e9;
-                            } else {
-                                double dotProduct = 0.0;
+                    // 1. Q, K, V の計算（ヘッドごとに計算）
+                    for (int h = 0; h < num_heads; h++) {
+                        for (int i = 0; i < genSeqLen; i++) {
+                            for (int j = 0; j < head_size; j++) {
+                                double sumQ = 0.0, sumK = 0.0, sumV = 0.0;
                                 for (int k = 0; k < dModel; k++) {
-                                    dotProduct += query[0][l][i][k] * key[0][l][j][k];
+                                    sumQ += currentLayerInput[i][k] * wq[l][h][k][j];
+                                    sumK += currentLayerInput[i][k] * wk[l][h][k][j];
+                                    sumV += currentLayerInput[i][k] * wv[l][h][k][j];
                                 }
-                                attentionScores[0][l][i][j] = dotProduct / scale;
+                                query[0][l][i][h][j] = sumQ;
+                                key[0][l][i][h][j] = sumK;
+                                value[0][l][i][h][j] = sumV;
                             }
                         }
                     }
 
-                    for (int i = 0; i < genSeqLen; i++) {
-                        double max = attentionScores[0][l][i][0];
-                        for (int j = 1; j < genSeqLen; j++) {
-                            if (attentionScores[0][l][i][j] > max) {
-                                max = attentionScores[0][l][i][j];
+                    // 2. アテンションスコアの計算（ヘッドごと、scaleは head_size の平方根）
+                    double scale = Math.sqrt(head_size);
+                    for (int h = 0; h < num_heads; h++) {
+                        for (int i = 0; i < genSeqLen; i++) {
+                            for (int j = 0; j < genSeqLen; j++) {
+                                if (j > i) {
+                                    attentionScores[0][l][h][i][j] = -1e9;
+                                } else {
+                                    double dotProduct = 0.0;
+                                    for (int k = 0; k < head_size; k++) {
+                                        dotProduct += query[0][l][i][h][k] * key[0][l][j][h][k];
+                                    }
+                                    attentionScores[0][l][h][i][j] = dotProduct / scale;
+                                }
                             }
-                        }
-
-                        double sum = 0.0;
-                        double[] expRow = new double[genSeqLen];
-                        for (int j = 0; j < genSeqLen; j++) {
-                            expRow[j] = Math.exp(attentionScores[0][l][i][j] - max);
-                            sum += expRow[j];
-                        }
-
-                        for (int j = 0; j < genSeqLen; j++) {
-                            attentionWeights[0][l][i][j] = expRow[j] / sum;
                         }
                     }
 
+                    // 3. Softmax（ヘッドごとに計算）
+                    for (int h = 0; h < num_heads; h++) {
+                        for (int i = 0; i < genSeqLen; i++) {
+                            double max = attentionScores[0][l][h][i][0];
+                            for (int j = 1; j < genSeqLen; j++) {
+                                if (attentionScores[0][l][h][i][j] > max) {
+                                    max = attentionScores[0][l][h][i][j];
+                                }
+                            }
+
+                            double sum = 0.0;
+                            double[] expRow = new double[genSeqLen];
+                            for (int j = 0; j < genSeqLen; j++) {
+                                expRow[j] = Math.exp(attentionScores[0][l][h][i][j] - max);
+                                sum += expRow[j];
+                            }
+
+                            for (int j = 0; j < genSeqLen; j++) {
+                                attentionWeights[0][l][h][i][j] = expRow[j] / sum;
+                            }
+                        }
+                    }
+
+                    // 4. Attention Output（各ヘッドの結果を Concat して残差接続）
                     for (int i = 0; i < genSeqLen; i++) {
+                        int outCol = 0;
+                        for (int h = 0; h < num_heads; h++) {
+                            for (int j = 0; j < head_size; j++) {
+                                double weightedSum = 0.0;
+                                for (int k = 0; k < genSeqLen; k++) {
+                                    weightedSum += attentionWeights[0][l][h][i][k] * value[0][l][k][h][j];
+                                }
+                                attentionOutput[0][l][i][outCol++] = weightedSum;
+                            }
+                        }
+                        // 残差接続（Residual Connection）
                         for (int j = 0; j < dModel; j++) {
-                            double weightedSum = 0.0;
-                            for (int k = 0; k < genSeqLen; k++) {
-                                weightedSum += attentionWeights[0][l][i][k] * value[0][l][k][j];
-                            }
-                            attentionOutput[0][l][i][j] = weightedSum + currentLayerInput[i][j];
+                            attentionOutput[0][l][i][j] += currentLayerInput[i][j];
                         }
                     }
+
 
                     for (int i = 0; i < genSeqLen; i++) {
                         double[] gate = new double[dHidden];
