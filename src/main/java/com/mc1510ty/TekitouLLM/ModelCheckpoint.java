@@ -1,7 +1,9 @@
 package com.mc1510ty.TekitouLLM;
 
 import java.io.*;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class ModelCheckpoint {
@@ -14,7 +16,7 @@ public class ModelCheckpoint {
                                  double[][][][] wq, double[][][][] wk, double[][][][] wv,
                                  double[][][] wGate, double[][][] wUp, double[][][] wDown,
                                  double[][] wOut,
-                                 double[][] rmsWeightAttention, double[][] rmsWeightFfn) throws IOException {
+                                 double[][] rmsWeightAttention, double[][] rmsWeightFfn, List<String> merges) throws IOException {
 
         try (DataOutputStream dos = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(filePath)))) {
 
@@ -24,6 +26,11 @@ public class ModelCheckpoint {
             dos.writeInt(num_heads);
             dos.writeInt(dHidden);
             dos.writeInt(vocabSize);
+
+            dos.writeInt(merges.size());
+            for (String merge : merges) {
+                dos.writeUTF(merge);
+            }
 
             // 2. トークナイザーの辞書（tokenToId）の書き込み
             dos.writeInt(tokenToId.size());
@@ -67,6 +74,7 @@ public class ModelCheckpoint {
         public double[][][] wGate, wUp, wDown;
         public double[][] wOut;
         public double[][] rmsWeightAttention, rmsWeightFfn;
+        public List<String> merges = new ArrayList<>();
     }
 
 
@@ -81,6 +89,11 @@ public class ModelCheckpoint {
             data.num_heads = dis.readInt();
             data.dHidden = dis.readInt();
             data.vocabSize = dis.readInt();
+
+            int mergesSize = dis.readInt();
+            for (int i = 0; i < mergesSize; i++) {
+                data.merges.add(dis.readUTF());
+            }
 
             // 2. トークナイザーの辞書の読み込み
             int vocabSizeMap = dis.readInt();

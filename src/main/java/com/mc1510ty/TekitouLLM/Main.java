@@ -13,7 +13,7 @@ public class Main {
         // 1. 複数の会話パターン（データセット）を用意する
 
         String[] pretrainDataset = {
-                "絶縁ゲートバイポーラトランジスタは半導体素子のひとつで、NPNPの4層からなりMOSゲートSCRまたはMOSゲートサイリスタ（英語版）と同じ構造でありながら、全動作領域でサイリスタ動作を完全に抑え込み、トランジスタ動作のみをさせるように設計した、MOSゲートで電流を制御するバイポーラトランジスタである。電力制御の用途で使用される。■",
+                "絶縁ゲートバイポーラトランジスタは半導体素子のひとつで、NPNPの4層からなりMOSゲートSCRまたはMOSゲートサイリスタと同じ構造でありながら、全動作領域でサイリスタ動作を完全に抑え込み、トランジスタ動作のみをさせるように設計した、MOSゲートで電流を制御するバイポーラトランジスタである。電力制御の用途で使用される。■",
                 "この方針文書は、著作権の対象となっている著作物であって、一般公衆に開放されている屋外の場所、または一般公衆の見やすい屋外の場所に恒常的に設置された美術の著作物について、その著作権法上の扱いについて説明するとともに、当該著作物を被写体とする写真をウィキペディア日本語版において利用する際に守るべき事項を定めたものです。■",
                 "被写体である美術著作物の題号と著作者名を画像ページに記載する。題号と著作者名が設置場所に表示されていない場合であっても、公表された文献に基づく調査を行い、それらが判明すれば記載する。一方、調査を行っても容易に判明しない場合は、記載する必要はない。また、著作者の意思により非公開としていると認められる場合には、記載してはならない。■",
                 "画像は、被写体である美術著作物に密接に関連する事柄が記述されている1以上の記事（標準名前空間）で表示されなければならない。記事における画像表示は、画像のアップロード後すみやかに行い、将来、記事において画像を使用したいという漠然とした意思があるにすぎない状態では、画像のアップロードを避けること。■",
@@ -64,11 +64,11 @@ public class Main {
 
         // 学習設定
         int numLayers = larned ? modeldata.numLayers : 6; // 層(レイヤー)の数
-        int vectorSize = larned ? modeldata.vectorSize : 96; // 次元の数
+        int vectorSize = larned ? modeldata.vectorSize : 128; // 次元の数
         int maxSeqLen = 256; // 最大文字数
         int pretrainEpochs = 120; // 事前学習の回数
         int chatEpochs = 150;     // 指示ファインチューニングの回数
-        int mixEpochs = 100;      // 最後に両方をごちゃ混ぜにするミックス学習
+        int mixEpochs = 80;      // 最後に両方をごちゃ混ぜにするミックス学習
 
         double learningRate = 0.0005; // 学習率
         int batchSize = 12; // 並列数
@@ -97,6 +97,7 @@ public class Main {
             // ロード成功時は保存されていた辞書を復元
             tokenizer.tokenToId = modeldata.tokenToId;
             tokenizer.idToToken = modeldata.idToToken;
+            tokenizer.merges = modeldata.merges;
             vocabSize = modeldata.vocabSize;
         } else {
             // ロード失敗時はこれまで通りデータセットを結合して訓練
@@ -1100,7 +1101,7 @@ public class Main {
             }
 
             try {
-                ModelCheckpoint.saveModel("a.omomi", numLayers, vectorSize, num_heads, dHidden, vocabSize, tokenizer.tokenToId, embeddingTable, wq, wk, wv, wGate, wUp, wDown, wOut, rmsWeightAttention, rmsWeightFfn);
+                ModelCheckpoint.saveModel("a.omomi", numLayers, vectorSize, num_heads, dHidden, vocabSize, tokenizer.tokenToId, embeddingTable, wq, wk, wv, wGate, wUp, wDown, wOut, rmsWeightAttention, rmsWeightFfn,tokenizer.merges);
             } catch (IOException e) {
                 e.printStackTrace();
                 IO.println("重みの保存に失敗しました!");
@@ -1112,6 +1113,16 @@ public class Main {
         // --- 対話・文字生成テスト（バッチ対応済みの配列の 0 番目を使用） ---
         System.out.println("\n=== 対話・文字生成テスト ===");
         Scanner scanner = new Scanner(System.in);
+
+
+        double[] logits = new double[vocabSizeLocal];
+        double[] probs = new double[vocabSizeLocal];
+        Integer[] vocabIndices = new Integer[vocabSizeLocal];
+        for (int j = 0; j < vocabSizeLocal; j++) {
+            vocabIndices[j] = j;
+        }
+        boolean[] keep = new boolean[vocabSizeLocal];
+
 
         while (true) {
             System.out.print("AIへの入力文字をどうぞ: ");
@@ -1270,7 +1281,9 @@ public class Main {
                 }
 
                 int lastIdx = genSeqLen - 1;
-                double[] logits = new double[vocabSizeLocal];
+
+                // 中身をリセットして使い回す
+                Arrays.fill(logits, 0.0);
                 for (int j = 0; j < vocabSizeLocal; j++) {
                     double sum = 0.0;
                     for (int k = 0; k < dModel; k++) {
@@ -1280,7 +1293,7 @@ public class Main {
                 }
 
                 double temperature = 0.7;
-                double[] probs = new double[vocabSizeLocal];
+                Arrays.fill(probs, 0.0); // 中身をリセット
                 double sumExp = 0.0;
                 double maxLogit = logits[0];
                 for (int j = 1; j < vocabSizeLocal; j++) {
@@ -1296,6 +1309,40 @@ public class Main {
 
                 for (int j = 0; j < vocabSizeLocal; j++) {
                     probs[j] /= sumExp;
+                }
+
+                // ==========================================
+                // Top-p（ニュークレアス・サンプリング）
+                // ==========================================
+                double topP = 0.9; // 確率の累計が90%に達するまでを候補にする
+
+                // vocabIndices はあらかじめ作ってあるので、そのままソートに使う
+                Arrays.sort(vocabIndices, (a, b) -> Double.compare(probs[b], probs[a]));
+
+                double cumulativeProb = 0.0;
+                Arrays.fill(keep, false); // 中身をリセット
+                for (int j = 0; j < vocabSizeLocal; j++) {
+                    int idx = vocabIndices[j];
+                    cumulativeProb += probs[idx];
+                    keep[idx] = true;
+                    if (cumulativeProb >= topP) {
+                        break; // 90%に達した時点で終了
+                    }
+                }
+
+                // 残らなかったものの確率を0にして、残った分だけで確率を再計算
+                double newSum = 0.0;
+                for (int j = 0; j < vocabSizeLocal; j++) {
+                    if (!keep[j]) {
+                        probs[j] = 0.0;
+                    } else {
+                        newSum += probs[j];
+                    }
+                }
+                for (int j = 0; j < vocabSizeLocal; j++) {
+                    if (newSum > 0) {
+                        probs[j] /= newSum;
+                    }
                 }
 
                 double r = random.nextDouble();

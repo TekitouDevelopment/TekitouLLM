@@ -5,7 +5,7 @@ import java.util.*;
 public class SimpleTokenizer {
     public Map<String, Integer> tokenToId = new HashMap<>();
     public Map<Integer, String> idToToken = new HashMap<>();
-    private List<String> merges = new ArrayList<>();
+    public List<String> merges = new ArrayList<>();
 
     private static final List<String> SPECIAL_TOKENS = Arrays.asList("U:", ">A:", "■");
 
