@@ -16,7 +16,8 @@ public class ModelCheckpoint {
                                  double[][][][] wq, double[][][][] wk, double[][][][] wv,
                                  double[][][] wGate, double[][][] wUp, double[][][] wDown,
                                  double[][] wOut,
-                                 double[][] rmsWeightAttention, double[][] rmsWeightFfn, List<String> merges) throws IOException {
+                                 double[][] rmsWeightAttention, double[][] rmsWeightFfn, List<String> merges,
+                                 String omomilearnusedatamoto) throws IOException {
 
         try (DataOutputStream dos = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(filePath)))) {
 
@@ -59,6 +60,8 @@ public class ModelCheckpoint {
             write2DArray(dos, rmsWeightAttention);
             write2DArray(dos, rmsWeightFfn);
 
+            dos.writeUTF(omomilearnusedatamoto);
+
             System.out.println("モデルの保存が完了しました: " + filePath);
         }
     }
@@ -75,6 +78,7 @@ public class ModelCheckpoint {
         public double[][] wOut;
         public double[][] rmsWeightAttention, rmsWeightFfn;
         public List<String> merges = new ArrayList<>();
+        public String omomilearnusedatamoto;
     }
 
 
@@ -115,6 +119,8 @@ public class ModelCheckpoint {
             data.wOut = read2DArray(dis);
             data.rmsWeightAttention = read2DArray(dis);
             data.rmsWeightFfn = read2DArray(dis);
+
+            data.omomilearnusedatamoto = dis.readUTF();
 
             System.out.println("モデルの読み込みが完了しました: " + filePath);
         }

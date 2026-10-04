@@ -9,13 +9,13 @@ public class Main {
 
         IO.println("=======================================================");
         IO.println(" 適当LLM (C) 2026 TekitouDevelopment, 2023-2026 1510ty");
-        IO.println(" 重み学習に使用したデータ元: 1510ty独自文書, Wikipedia");
         IO.println("=======================================================");
 
         long seed = 12345L;
         Random random = new Random(seed);
 
         // 1. 複数の会話パターン（データセット）を用意する
+
 
         String[] pretrainDataset = {
                 "絶縁ゲートバイポーラトランジスタは半導体素子のひとつで、NPNPの4層からなりMOSゲートSCRまたはMOSゲートサイリスタと同じ構造でありながら、全動作領域でサイリスタ動作を完全に抑え込み、トランジスタ動作のみをさせるように設計した、MOSゲートで電流を制御するバイポーラトランジスタである。電力制御の用途で使用される。■",
@@ -82,6 +82,8 @@ public class Main {
         // 設定や初期化のイメージ
         int num_heads = larned ? modeldata.num_heads : 8; // ヘッド数
         int head_size = vectorSize / num_heads;
+
+        String omomilearnusedatamoto = larned  ? modeldata.omomilearnusedatamoto : "1510ty独自文書, Wikipedia";
 
         // AdamWのハイパーパラメータ
         double beta1 = 0.9;
@@ -1142,7 +1144,7 @@ public class Main {
             }
 
             try {
-                ModelCheckpoint.saveModel("a.omomi", numLayers, vectorSize, num_heads, dHidden, vocabSize, tokenizer.tokenToId, embeddingTable, wq, wk, wv, wGate, wUp, wDown, wOut, rmsWeightAttention, rmsWeightFfn, tokenizer.merges);
+                ModelCheckpoint.saveModel("a.omomi", numLayers, vectorSize, num_heads, dHidden, vocabSize, tokenizer.tokenToId, embeddingTable, wq, wk, wv, wGate, wUp, wDown, wOut, rmsWeightAttention, rmsWeightFfn, tokenizer.merges, omomilearnusedatamoto);
             } catch (IOException e) {
                 e.printStackTrace();
                 IO.println("重みの保存に失敗しました!");
@@ -1155,7 +1157,11 @@ public class Main {
         }
 
 // --- 対話・文字生成テスト（KVキャッシュ対応版） ---
-        System.out.println("\n=== 対話・文字生成テスト ===");
+        IO.println();
+        System.out.println("=====チャット=====");
+        IO.println("重み学習に使用したデータ元: " + omomilearnusedatamoto);
+        IO.println(" Hint: /helpでコマンド一覧と使い方を表示");
+        IO.println();
         Scanner scanner = new Scanner(System.in);
 
         double[] logits = new double[vocabSizeLocal];
@@ -1183,7 +1189,7 @@ public class Main {
                     IO.println("終了します");
                     break;
                 }
-                if (Objects.equals(userInput, "/clear")) {
+                if (Objects.equals(userInput, "/cleartalk")) {
                     history.clear();
                     IO.println("会話履歴をリセットしました");
                     continue;
@@ -1193,7 +1199,30 @@ public class Main {
                     tokenizer.tokenToId.forEach((key1, value1) -> System.out.println("  [" + value1 + "] " + key1));
                     continue;
                 }
-                IO.println("不明なコマンド");
+                if (Objects.equals(userInput, "/help")) {
+                    IO.println();
+                    IO.println("=============================================");
+                    IO.println("           コマンド一覧と使い方");
+                    IO.println("=============================================");
+                    IO.println();
+                    IO.println();
+                    IO.println("/help");
+                    IO.println(" コマンド一覧と使い方を表示します");
+                    IO.println();
+                    IO.println("/exit");
+                    IO.println(" 終了します");
+                    IO.println();
+                    IO.println("/cleartalk");
+                    IO.println(" 会話履歴をリセットします");
+                    IO.println();
+                    IO.println("/subwords");
+                    IO.println(" BPEによって作成されたサブワードを表示します");
+                    IO.println();
+                    IO.println();
+                    IO.println("=============================================");
+                    IO.println();
+                }
+                IO.println("不明なコマンド、/helpでコマンド一覧と使い方を表示");
                 continue;
             }
 
