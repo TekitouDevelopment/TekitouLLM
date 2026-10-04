@@ -31,7 +31,9 @@ public class Main {
                 "グラフィックスハードウェア層に近いローレベル (low level) な制御を目的としており、これによりオーバーヘッドを低減し、ハードウェアの性能を限界まで引き出すことが可能となる。VulkanはAppleのMetalやマイクロソフトのDirect3D 12といった先発のローレベルAPIと競合するが、プラットフォーム独自の固有仕様ではなく、様々なデバイスやオペレーティングシステムをターゲットにできることが特徴である。■",
                 "デフォルトでは、TASC/ATO プラグインは手動の常用ブレーキで使用されるブレーキ指令を使用します。しかし実際の鉄道の TASC/ATO では、手動の常用ブレーキよりも細かくブレーキの強さを制御できるようになっていることがあります。車両性能とプラグインの設定を調節することで、そのような動作を再現することができます。■",
                 "Vulkanが出現する以前、クロスプラットフォームなグラフィックスAPIとしてOpenGLおよびOpenGL ESがすでに存在していた。しかし、OpenGL黎明期のハードウェア設計に由来する互換性重視のAPI設計は徐々に陳腐化し、OpenGL 4に至る頃にはすでに最新のGPUハードウェア設計との乖離が発生してしまっていた。また、OpenGL/OpenGL ESはハードウェアを高度に抽象化しており、そのためプラットフォーム間の移植性やアプリケーション開発者にとっての利便性は高いものの、AAAタイトルのゲームなどに代表されるような性能要求の厳しいソフトウェアの開発に利用する場合はオーバーヘッドが大きくなってしまい、ハードウェアの限界性能を引き出すことができなくなってしまうという問題を抱えていた。オーバーヘッドの増加による描画効率の低下はまた電力効率の低下にも直結するため、モバイル機器など電力供給の限られるデバイスにおいても効率面での影響は無視できない。このため、SIGGRAPH 2014で、レガシーな設計が蓄積しているOpenGLをリセットし、ゼロから構築し直して刷新する、次世代の標準3D API規格 (OpenGL Next Generation, glNext) の策定が始められることがアナウンスされた。このとき、マルチスレッド対応やシェーディング中間言語などの近代的な技術が導入されることが発表された。■",
-
+                "こんにちは。突然ですが、LWJGLを使ってゲームを作っていると出てくる、この警告、うざいですよね。これを消す方法をAIに聞いたら、'--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow'これをJavaへの引数として指定すればいいみたいです。これで実際に直りました。以上です。■",
+                "こんにちは、突然ですが、LWJGL使ってゲーム作っていると出てくる、この警告、うざいですよね。これ消す方法AIに聞いたら、'--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow'これをJavaへの引数として指定すればいいみたいです。これで実際に直りました。以上です。■",
+                "Vulkan is a cross-platform API and open standard for 3D graphics and parallelized computing. It was intended to address the shortcomings of OpenGL, and allow developers more control over the GPU. It is designed to support a wide variety of GPUs, CPUs and operating systems, and modern multi-core CPUs also.■",
 
         };
 
@@ -55,6 +57,7 @@ public class Main {
                 "U:BVE>A:'BVE'は、mackoy氏が主に個人で開発している、3DCGを用いたトレインシミュレーターのことです。最新バージョンは2020年9月23日にリリースされた、'BVE6'です。公式サイトのURLは、'https://bvets.net/'となっています。■",
                 "U:LLM>A:LLMとは、簡単に言うと現代の会話できるAIのことです。■",
                 "U:BVEとは>A:'BVE'とは、mackoy氏が個人で開発している、3DCG(3D描画)を用いたトレイン シミュレーターのことです。最新バージョンは2020/9/23にリリースされた、'BVE6'です。公式サイトのURLは、'https://bvets.net/'です。■",
+                "U:Hello>A:Hello! What are you doing today?"
         };
 
         boolean larned = false;
@@ -71,14 +74,14 @@ public class Main {
         // 学習設定
         int numLayers = larned ? modeldata.numLayers : 6; // 層(レイヤー)の数
         int vectorSize = larned ? modeldata.vectorSize : 128; // 次元の数
-        int maxSeqLen = 768; // 最大文字数
+        int maxSeqLen = 512; // 最大文字数
         int pretrainEpochs = 120; // 事前学習の回数
-        int chatEpochs = 150;     // 指示学習の回数
+        int chatEpochs = 165;     // 指示学習の回数
         int mixEpochs = 80;      // ミックス学習の回数
 
         double learningRate = 0.0005; // 学習率
         int batchSize = 12; // 並列数
-        int targetVocabSize = 1200; //BPEの目標コンテキスト数
+        int targetVocabSize = 2000; //BPEの目標コンテキスト数
 
         // 設定や初期化のイメージ
         int num_heads = larned ? modeldata.num_heads : 8; // ヘッド数
