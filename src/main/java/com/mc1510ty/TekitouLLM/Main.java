@@ -34,19 +34,19 @@ public class Main {
                 "こんにちは。突然ですが、LWJGLを使ってゲームを作っていると出てくる、この警告、うざいですよね。これを消す方法をAIに聞いたら、'--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow'これをJavaへの引数として指定すればいいみたいです。これで実際に直りました。以上です。■",
                 "こんにちは、突然ですが、LWJGL使ってゲーム作っていると出てくる、この警告、うざいですよね。これ消す方法AIに聞いたら、'--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow'これをJavaへの引数として指定すればいいみたいです。これで実際に直りました。以上です。■",
                 "Vulkan is a cross-platform API and open standard for 3D graphics and parallelized computing. It was intended to address the shortcomings of OpenGL, and allow developers more control over the GPU. It is designed to support a wide variety of GPUs, CPUs and operating systems, and modern multi-core CPUs also.■",
-
+                "こんにちは。最近いろいろ(大部分はなまけw)あって、しばらくサイトを放置してたんですが、友人のサイトをみて久しぶりにやる気が出てきました。まあほんとにそれだけなんですが、他にも一応Adsenseは表示だけでも収益が出るって知ったので、ちょっとでもMONEYになるようにしようかなと。まあちょっとづつでも役立つもの増やしていこうと思います。それではさいなら。(?)■",
         };
 
 
         String[] chatDataset = {
                 "U:こんにちは>A:こんにちは!■",
-                "U:おはよう>A:おはようございます、今朝は何時に起きましたか？■",
+                "U:おはよう>A:おはようございます、今朝は何時に起きましたか？■>U:8時に起きたよ>A:8時、いいですね！昨日は何時くらいに寝ましたか？■",
                 "U:天気は？>A:私の学習データは常に更新されるわけではないので、リアルタイム性が重視される場合(今回の場合は今日の天気)、正しい情報を提供することができません。検索エンジンで'天気'などのワードで調べるのがはやいと思います。■",
                 "U:今日の天気>A:学習データは最新ではないので、正しい情報を提供することができません。検索エンジンで'天気'などのワードで調べるのがはやいと思います。■",
                 "U:眠いな>A:今朝はよく眠れましたか？時間があればお昼寝をしたりするのも手です。■",
-                "U:明日も学校かぁ>A:毎日毎日、同じ日々の繰り返しで大変ですよね。睡眠時間をしっかり取るとまだましになるはずです。■",
-                "U:LLMって何？>A:LLMとは、簡単に言うと現代の会話できるAIのことです。■",
-                "U:Java言語の名前の由来は何？>A:Java(プログラミング言語)の名前の由来は、開発チームが好んで飲んでいたインドネシア・ジャワ島のコーヒーに由来しています。Javaの歴史についてもっと知りたい場合は、他の質問もどんどん言ってください!■",
+                "U:明日も学校かぁ>A:毎日毎日、同じ日々の繰り返しで大変ですよね。睡眠時間をしっかり取るとまだましになるはずです。■>U:睡眠時間自体は十分取ってるんだけどなぁA:>なるほど、最近は学校で何か辛いことなどはありましたか？■",
+                "U:LLMって何？>A:LLMとは、簡単に言うと現代の会話できるAIのことです。LLMについてもっと知りたい場合は、他の質問もどうぞ!■>U:ChatGPTとか、あれもLLMなの？>A:はい、ChatGPTもLLMです！他にも、GeminiやClaudeなどのAIも、LLMです。■",
+                "U:Java言語の名前の由来は何？>A:Java(プログラミング言語)の名前の由来は、開発チームが好んで飲んでいたインドネシア・ジャワ島のコーヒーに由来しています。Javaの歴史についてもっと知りたい場合は、他の質問もどんどん言ってください!■>U:ジャワコーヒーってどんな味？>A:ジャワコーヒーは、酸味が少なく、しっかりとした苦味と深いコクが特徴のコーヒーです。■",
                 "U:Javaの最新バージョンは？>A:Java(プログラミング言語)の最新LTSバージョンは、Java25の、'25.0.4.1'です。Java25では、クラス定義の簡略化や、IO.printlnが使用可能になるなど、より便利になりました。■",
                 "U:ls>A:lsは、LinuxやMacOSなどのターミナルで、ディレクトリやファイルの一覧を表示する基本コマンドです。■",
                 "U:桃太郎の桃が流れる音>A:'どんぶらこ'です。■",
@@ -54,8 +54,6 @@ public class Main {
                 "U:こんにちは>A:こんにちは！今日は何をしますか？■",
                 "U:こんばんは>A:こんばんは。今日は何がありましたか?■",
                 "U:Windowsの最新バージョン>A:Microsoft Windowsの2026年10月2日時点での最新バージョンは、2021年10月5日にリリースされた'Windows 11'です。■",
-                "U:BVE>A:'BVE'は、mackoy氏が主に個人で開発している、3DCGを用いたトレインシミュレーターのことです。最新バージョンは2020年9月23日にリリースされた、'BVE6'です。公式サイトのURLは、'https://bvets.net/'となっています。■",
-                "U:LLM>A:LLMとは、簡単に言うと現代の会話できるAIのことです。■",
                 "U:BVEとは>A:'BVE'とは、mackoy氏が個人で開発している、3DCG(3D描画)を用いたトレイン シミュレーターのことです。最新バージョンは2020/9/23にリリースされた、'BVE6'です。公式サイトのURLは、'https://bvets.net/'です。■",
                 "U:Hello>A:Hello! What are you doing today?■"
         };
@@ -74,10 +72,8 @@ public class Main {
         // 学習設定
         int numLayers = larned ? modeldata.numLayers : 6; // 層(レイヤー)の数
         int vectorSize = larned ? modeldata.vectorSize : 128; // 次元の数
-        int maxSeqLen = 512; // 最大トークン数
-        int pretrainEpochs = 120; // 事前学習の回数
-        int chatEpochs = 165;     // 指示学習の回数
-        int mixEpochs = 80;      // ミックス学習の回数
+        int maxSeqLen = 384; // 最大トークン数
+
 
         double learningRate = 0.0005; // 学習率
         int batchSize = 12; // 並列数
@@ -86,7 +82,6 @@ public class Main {
         // 設定や初期化のイメージ
         int num_heads = larned ? modeldata.num_heads : 8; // ヘッド数
         int head_size = vectorSize / num_heads;
-        int epochs = pretrainEpochs + chatEpochs + mixEpochs;
 
         // AdamWのハイパーパラメータ
         double beta1 = 0.9;
@@ -205,11 +200,10 @@ public class Main {
         double[][][][] ffnOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
 
 
-        String[] modenames = new String[4];
-        modenames[0] = "未知のモード";
-        modenames[1] = "事前学習";
-        modenames[2] = "対話学習";
-        modenames[3] = "ミックス学習";
+        String[] modenames = new String[3];
+        modenames[0] = "事前学習";
+        modenames[1] = "対話学習";
+        modenames[2] = "ミックス学習";
 
         if (!larned) {
 
@@ -293,28 +287,35 @@ public class Main {
             System.out.println("=== 学習開始 ===");
 
             int epochstatus = 0;
+            boolean needHeader = true;
 
-            for (int epoch = 0; epoch < epochs; epoch++) {
+            int epoch = 0;
+            while (true) {
 
                 String[] currentDataset;
-                if (epoch < pretrainEpochs) {
-                    currentDataset = pretrainDataset;
-                    if (epochstatus == 0) {
+                // フェーズごとのデータセット選択とタイトル表示
+                if (epochstatus == 0) {
+                    if (needHeader) {
                         IO.println("=====事前学習=====");
-                        epochstatus = 1;
+                        needHeader = false;
                     }
-                } else if (epoch < pretrainEpochs + chatEpochs) {
-                    currentDataset = chatDataset;
-                    if (epochstatus == 1) {
+                    currentDataset = pretrainDataset;
+                } else if (epochstatus == 1) {
+                    if (needHeader) {
                         IO.println("=====対話学習=====");
-                        epochstatus = 2;
+                        needHeader = false;
                     }
-                } else {
-                    currentDataset = allDataset;
-                    if (epochstatus == 2) {
+                    currentDataset = chatDataset;
+                } else if (epochstatus == 2) {
+                    if (needHeader) {
                         IO.println("=====混合学習=====");
-                        epochstatus = 3;
+                        needHeader = false;
                     }
+                    currentDataset = allDataset;
+                } else {
+                    // すべてのフェーズが完了したらループを抜ける
+                    System.out.println("すべての学習フェーズが完了しました！");
+                    break;
                 }
 
                 Integer[] indices = new Integer[currentDataset.length];
@@ -1126,11 +1127,18 @@ public class Main {
                 elapsedSeconds = (endTime - startTime) / 1_000_000_000.0;
 
 
-                // Lossの計算と表示
-                if (epoch == 0 || (epoch + 1) % 1 == 0 || epoch == epochs - 1) {
-                    double avgLoss = epochTotalLoss.sum() / batchSize;
-                    System.out.println("Epoch [" + (epoch + 1) + "/" + epochs + "] - Loss: " + avgLoss + " Mode: " + modenames[epochstatus] + " 経過時間: " + elapsedSeconds + "秒");
+                double avgLoss = epochTotalLoss.sum() / batchSize;
+
+                IO.println("Epoch " + epoch +  " - Loss: " + avgLoss + " Mode: " + modenames[epochstatus] + " 経過時間: " + elapsedSeconds + "秒");
+
+
+                if (avgLoss < 3.0) {
+                    epochstatus++;
+                    needHeader = true; // 次のフェーズのタイトルを出すためにフラグを戻す
+                    System.out.println("ロスが3.0を下回ったため、次の学習データに進みます");
                 }
+
+                epoch++;
             }
 
             try {
@@ -1175,6 +1183,18 @@ public class Main {
                     IO.println("終了します");
                     break;
                 }
+                if (Objects.equals(userInput, "/clear")) {
+                    history.clear();
+                    IO.println("会話履歴をリセットしました");
+                    continue;
+                }
+                if (Objects.equals(userInput, "/subwords")) {
+                    System.out.println("\n作成されたサブワード:");
+                    tokenizer.tokenToId.forEach((key1, value1) -> System.out.println("  [" + value1 + "] " + key1));
+                    continue;
+                }
+                IO.println("不明なコマンド");
+                continue;
             }
 
             history.add("U:" + userInput);
