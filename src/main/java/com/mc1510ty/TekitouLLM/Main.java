@@ -1162,6 +1162,10 @@ public class Main {
         double[][][][] keyCache = new double[numLayers][num_heads][maxSeqLen][head_size];
         double[][][][] valueCache = new double[numLayers][num_heads][maxSeqLen][head_size];
 
+        List<String> history = new ArrayList<>();
+        StringBuilder generatedResponse = new StringBuilder();
+        int[] genEncoded = new int[maxSeqLen];
+
         while (true) {
             System.out.print("AIへの入力文字をどうぞ: ");
             String userInput = scanner.nextLine();
@@ -1173,14 +1177,16 @@ public class Main {
                 }
             }
 
-            String prompt = "U:" + userInput + ">A:";
+            history.add("U:" + userInput);
+            String prompt = String.join(">", history) + ">A:";
+
             List<Integer> promptEncodedList = tokenizer.encode(prompt);
             int promptLen = promptEncodedList.size();
 
-            int[] genEncoded = new int[promptLen];
             for (int i = 0; i < promptLen; i++) {
                 genEncoded[i] = promptEncodedList.get(i);
             }
+            int currentSeqLen = promptLen; // 現在のシーケンス長を管理する変数
 
             System.out.print("入力: " + userInput + "  生成結果: " + prompt);
 
@@ -1195,9 +1201,9 @@ public class Main {
             }
 
             // ==========================================
-            // 1. プロンプト部分を一括処理してKVキャッシュに保存
+            // 1. プロンプト部分の処理 (currentSeqLen を使用)
             // ==========================================
-            for (int i = 0; i < promptLen; i++) {
+            for (int i = 0; i < currentSeqLen; i++) {
                 int id = genEncoded[i];
                 System.arraycopy(embeddingTable[id], 0, inputEmbeddings[0][i], 0, vectorSize);
 
@@ -1324,32 +1330,60 @@ public class Main {
                 }
             }
 
-
+// ==========================================
+            // ★追加：プロンプトの最後の位置から「最初の1文字目」を予測する
             // ==========================================
+            generatedResponse.setLength(0);
+            int pos = promptLen - 1; // プロンプトの最後の位置
+
+            // 最終レイヤーの出力からロジットを計算
+            Arrays.fill(logits, 0.0);
+            for (int j = 0; j < vocabSizeLocal; j++) {
+                double sum = 0.0;
+                for (int k = 0; k < dModel; k++) {
+                    sum += ffnOutput[0][numLayers - 1][pos][k] * wOut[k][j];
+                }
+                logits[j] = sum;
+            }
+
+            // サンプリング処理を共通関数にするか、ここで1回実行
+            int bestNextId = sampleToken(logits, vocabSizeLocal, vocabIndices, probs, keep, random);
+
+            String predictedToken = tokenizer.decodeToken(bestNextId);
+            System.out.print(predictedToken);
+            generatedResponse.append(predictedToken);
+
+            // 最初の生成トークンをバッファに格納し、配列の長さを更新
+            genEncoded[promptLen] = bestNextId;
+            currentSeqLen = promptLen + 1;
+// ==========================================
             // 2. 1トークンずつ生成するループ（KVキャッシュを使用）
             // ==========================================
+            int lastTokenId;
+
             for (int step = 0; step < 300; step++) {
-                int currentSeqLen = genEncoded.length;
-                int lastTokenId = genEncoded[currentSeqLen - 1];
-                int pos = currentSeqLen - 1; // 現在のトークンの絶対位置
+
+                lastTokenId = genEncoded[currentSeqLen - 1];
+                pos = currentSeqLen - 1; // 現在の位置
 
                 if (lastTokenId == tokenizer.tokenToId.getOrDefault("■", -1)) {
                     break;
                 }
 
-                // 最新の1トークン分の埋め込みと位置エンコーディング
-                System.arraycopy(embeddingTable[lastTokenId], 0, inputEmbeddings[0][0], 0, vectorSize);
+                // 最新の1トークン分の埋め込みと位置エンコーディング（[0] ではなく [pos] に書き込む！）
+                System.arraycopy(embeddingTable[lastTokenId], 0, inputEmbeddings[0][pos], 0, vectorSize);
                 for (int j = 0; j < vectorSize; j++) {
                     double angle = pos * invFreq[j];
                     if (j % 2 == 0) {
-                        inputEmbeddings[0][0][j] += Math.sin(angle);
+                        inputEmbeddings[0][pos][j] += Math.sin(angle);
                     } else {
-                        inputEmbeddings[0][0][j] += Math.cos(angle);
+                        inputEmbeddings[0][pos][j] += Math.cos(angle);
                     }
                 }
 
                 for (int l = 0; l < numLayers; l++) {
-                    double[] currentLayerInput = (l == 0) ? inputEmbeddings[0][0] : ffnOutput[0][l - 1][pos];
+                    // l == 0 のときは入力埋め込み、l > 0 のときは前のレイヤーの pos 位置の出力を参照
+                    double[] currentLayerInput = (l == 0) ? inputEmbeddings[0][pos] : ffnOutput[0][l - 1][pos];
                     double[] normedInput = rmsNorm(currentLayerInput, rmsWeightAttention[l], 1e-5);
 
                     // 最新のQを計算し、KとVをキャッシュの [pos] の位置に直接保存
@@ -1361,36 +1395,36 @@ public class Main {
                                 sumK += normedInput[k] * wk[l][h][k][j];
                                 sumV += normedInput[k] * wv[l][h][k][j];
                             }
-                            query[0][l][0][h][j] = sumQ;
+                            query[0][l][pos][h][j] = sumQ; // [0] -> [pos] に修正
                             keyCache[l][h][pos][j] = sumK;
                             valueCache[l][h][pos][j] = sumV;
                         }
                     }
 
-                    // アテンションスコア：最新の位置（pos）から、過去の全位置（0 〜 pos）のキャッシュを参照
+                    // アテンションスコア：位置 pos から、過去の全位置（0 〜 pos）のキャッシュを参照
                     double scale = Math.sqrt(head_size);
                     for (int h = 0; h < num_heads; h++) {
                         for (int j = 0; j <= pos; j++) {
                             double dotProduct = 0.0;
                             for (int k = 0; k < head_size; k++) {
-                                dotProduct += query[0][l][0][h][k] * keyCache[l][h][j][k];
+                                dotProduct += query[0][l][pos][h][k] * keyCache[l][h][j][k]; // [0] -> [pos] に修正
                             }
-                            attentionScores[0][l][h][0][j] = dotProduct / scale;
+                            attentionScores[0][l][h][pos][j] = dotProduct / scale; // [0] -> [pos] に修正
                         }
 
                         // Softmax (0 〜 pos)
-                        double max = attentionScores[0][l][h][0][0];
+                        double max = attentionScores[0][l][h][pos][0];
                         for (int j = 1; j <= pos; j++) {
-                            if (attentionScores[0][l][h][0][j] > max) max = attentionScores[0][l][h][0][j];
+                            if (attentionScores[0][l][h][pos][j] > max) max = attentionScores[0][l][h][pos][j];
                         }
                         double sum = 0.0;
                         double[] expRow = new double[pos + 1];
                         for (int j = 0; j <= pos; j++) {
-                            expRow[j] = Math.exp(attentionScores[0][l][h][0][j] - max);
+                            expRow[j] = Math.exp(attentionScores[0][l][h][pos][j] - max);
                             sum += expRow[j];
                         }
                         for (int j = 0; j <= pos; j++) {
-                            attentionWeights[0][l][h][0][j] = expRow[j] / sum;
+                            attentionWeights[0][l][h][pos][j] = expRow[j] / sum; // [0] -> [pos] に修正
                         }
                     }
 
@@ -1400,19 +1434,19 @@ public class Main {
                         for (int j = 0; j < head_size; j++) {
                             double weightedSum = 0.0;
                             for (int k = 0; k <= pos; k++) {
-                                weightedSum += attentionWeights[0][l][h][0][k] * valueCache[l][h][k][j];
+                                weightedSum += attentionWeights[0][l][h][pos][k] * valueCache[l][h][k][j]; // [0] -> [pos]
                             }
-                            attentionOutput[0][l][0][outCol++] = weightedSum;
+                            attentionOutput[0][l][pos][outCol++] = weightedSum; // [0] -> [pos]
                         }
                     }
 
                     // 残差接続
                     for (int j = 0; j < dModel; j++) {
-                        attentionOutput[0][l][0][j] += currentLayerInput[j];
+                        attentionOutput[0][l][pos][j] += currentLayerInput[j]; // [0] -> [pos]
                     }
 
-                    // FFN (最新の1トークン分)
-                    double[] normedAttentionOutput = rmsNorm(attentionOutput[0][l][0], rmsWeightFfn[l], 1e-5);
+                    // FFN
+                    double[] normedAttentionOutput = rmsNorm(attentionOutput[0][l][pos], rmsWeightFfn[l], 1e-5); // [0] -> [pos]
                     double[] gate = new double[dHidden];
                     double[] up = new double[dHidden];
                     for (int j = 0; j < dHidden; j++) {
@@ -1437,11 +1471,11 @@ public class Main {
                         for (int k = 0; k < dHidden; k++) {
                             sum += gatedValue[k] * wDown[l][k][j];
                         }
-                        ffnOutput[0][l][pos][j] = sum + attentionOutput[0][l][0][j];
+                        ffnOutput[0][l][pos][j] = sum + attentionOutput[0][l][pos][j]; // [0] -> [pos]
                     }
                 }
 
-                // 最終レイヤーの出力から次のトークンを予測
+                // 最終レイヤーの出力から次のトークンを予測（posの位置を使用）
                 Arrays.fill(logits, 0.0);
                 for (int j = 0; j < vocabSizeLocal; j++) {
                     double sum = 0.0;
@@ -1451,80 +1485,29 @@ public class Main {
                     logits[j] = sum;
                 }
 
-                // サンプリング処理
-                double temperature = 0.7;
-                Arrays.fill(probs, 0.0);
-                double sumExp = 0.0;
-                double maxLogit = logits[0];
-                for (int j = 1; j < vocabSizeLocal; j++) {
-                    if (logits[j] > maxLogit) {
-                        maxLogit = logits[j];
-                    }
-                }
+                bestNextId = sampleToken(logits, vocabSizeLocal, vocabIndices, probs, keep, random);
 
-                for (int j = 0; j < vocabSizeLocal; j++) {
-                    probs[j] = Math.exp((logits[j] - maxLogit) / temperature);
-                    sumExp += probs[j];
-                }
-
-                for (int j = 0; j < vocabSizeLocal; j++) {
-                    probs[j] /= sumExp;
-                }
-
-                double topP = 0.9;
-                Arrays.sort(vocabIndices, (a, b) -> Double.compare(probs[b], probs[a]));
-
-                double cumulativeProb = 0.0;
-                Arrays.fill(keep, false);
-                for (int j = 0; j < vocabSizeLocal; j++) {
-                    int idx = vocabIndices[j];
-                    cumulativeProb += probs[idx];
-                    keep[idx] = true;
-                    if (cumulativeProb >= topP) {
-                        break;
-                    }
-                }
-
-                double newSum = 0.0;
-                for (int j = 0; j < vocabSizeLocal; j++) {
-                    if (!keep[j]) {
-                        probs[j] = 0.0;
-                    } else {
-                        newSum += probs[j];
-                    }
-                }
-                for (int j = 0; j < vocabSizeLocal; j++) {
-                    if (newSum > 0) {
-                        probs[j] /= newSum;
-                    }
-                }
-
-                double r = random.nextDouble();
-                double cumulative = 0.0;
-                int bestNextId = 0;
-
-                for (int j = 0; j < vocabSizeLocal; j++) {
-                    cumulative += probs[j];
-                    if (r <= cumulative) {
-                        bestNextId = j;
-                        break;
-                    }
-                }
-
-                String predictedToken = tokenizer.decodeToken(bestNextId);
+                predictedToken = tokenizer.decodeToken(bestNextId);
 
                 if (predictedToken.equals("■")) {
                     break;
                 }
 
                 System.out.print(predictedToken);
+                generatedResponse.append(predictedToken);
 
-                int[] nextGenEncoded = new int[currentSeqLen + 1];
-                System.arraycopy(genEncoded, 0, nextGenEncoded, 0, currentSeqLen);
-                nextGenEncoded[currentSeqLen] = bestNextId;
-                genEncoded = nextGenEncoded;
+                genEncoded[currentSeqLen] = bestNextId;
+                currentSeqLen++;
             }
             System.out.println();
+
+            String aiReply = generatedResponse.toString();
+            history.add("A:" + aiReply);
+
+            if (history.size() > 6) {
+                history.removeFirst();
+                history.removeFirst();
+            }
         }
     }
 
@@ -1542,5 +1525,65 @@ public class Main {
             output[i] = (input[i] / rms) * weight[i];
         }
         return output;
+    }
+
+    private static int sampleToken(double[] logits, int vocabSizeLocal, Integer[] vocabIndices, double[] probs, boolean[] keep, Random random) {
+        double temperature = 0.7;
+        Arrays.fill(probs, 0.0);
+        double sumExp = 0.0;
+        double maxLogit = logits[0];
+        for (int j = 1; j < vocabSizeLocal; j++) {
+            if (logits[j] > maxLogit) {
+                maxLogit = logits[j];
+            }
+        }
+
+        for (int j = 0; j < vocabSizeLocal; j++) {
+            probs[j] = Math.exp((logits[j] - maxLogit) / temperature);
+            sumExp += probs[j];
+        }
+
+        for (int j = 0; j < vocabSizeLocal; j++) {
+            probs[j] /= sumExp;
+        }
+
+        double topP = 0.9;
+        Arrays.sort(vocabIndices, (a, b) -> Double.compare(probs[b], probs[a]));
+
+        double cumulativeProb = 0.0;
+        Arrays.fill(keep, false);
+        for (int j = 0; j < vocabSizeLocal; j++) {
+            int idx = vocabIndices[j];
+            cumulativeProb += probs[idx];
+            keep[idx] = true;
+            if (cumulativeProb >= topP) {
+                break;
+            }
+        }
+
+        double newSum = 0.0;
+        for (int j = 0; j < vocabSizeLocal; j++) {
+            if (!keep[j]) {
+                probs[j] = 0.0;
+            } else {
+                newSum += probs[j];
+            }
+        }
+        for (int j = 0; j < vocabSizeLocal; j++) {
+            if (newSum > 0) {
+                probs[j] /= newSum;
+            }
+        }
+
+        double r = random.nextDouble();
+        double cumulative = 0.0;
+        for (int j = 0; j < vocabSizeLocal; j++) {
+            int idx = vocabIndices[j]; // ※ソートされたインデックスから確率を累積する
+            cumulative += probs[idx];
+            if (r <= cumulative) {
+                return idx;
+            }
+        }
+        return vocabIndices[0];
     }
 }
