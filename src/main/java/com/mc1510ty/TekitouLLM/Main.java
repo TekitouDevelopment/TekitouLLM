@@ -57,7 +57,7 @@ public class Main {
                 "U:BVE>A:'BVE'は、mackoy氏が主に個人で開発している、3DCGを用いたトレインシミュレーターのことです。最新バージョンは2020年9月23日にリリースされた、'BVE6'です。公式サイトのURLは、'https://bvets.net/'となっています。■",
                 "U:LLM>A:LLMとは、簡単に言うと現代の会話できるAIのことです。■",
                 "U:BVEとは>A:'BVE'とは、mackoy氏が個人で開発している、3DCG(3D描画)を用いたトレイン シミュレーターのことです。最新バージョンは2020/9/23にリリースされた、'BVE6'です。公式サイトのURLは、'https://bvets.net/'です。■",
-                "U:Hello>A:Hello! What are you doing today?"
+                "U:Hello>A:Hello! What are you doing today?■"
         };
 
         boolean larned = false;
@@ -74,7 +74,7 @@ public class Main {
         // 学習設定
         int numLayers = larned ? modeldata.numLayers : 6; // 層(レイヤー)の数
         int vectorSize = larned ? modeldata.vectorSize : 128; // 次元の数
-        int maxSeqLen = 512; // 最大文字数
+        int maxSeqLen = 512; // 最大トークン数
         int pretrainEpochs = 120; // 事前学習の回数
         int chatEpochs = 165;     // 指示学習の回数
         int mixEpochs = 80;      // ミックス学習の回数
@@ -184,51 +184,6 @@ public class Main {
             }
         }
 
-        // --- グローバル勾配（全スレッドの結果を最終的に合算する場所） ---
-        double[][] globalDWOut = new double[vectorSize][vocabSize];
-        double[][][] globalDWGate = new double[numLayers][vectorSize][vectorSize * 2];
-        double[][][] globalDWUp = new double[numLayers][vectorSize][vectorSize * 2];
-        double[][][] globalDWDown = new double[numLayers][vectorSize * 2][vectorSize];
-        double[][][][] globalDWq = new double[numLayers][num_heads][vectorSize][head_size];
-        double[][][][] globalDWk = new double[numLayers][num_heads][vectorSize][head_size];
-        double[][][][] globalDWv = new double[numLayers][num_heads][vectorSize][head_size];
-        double[][] globalDEmbeddingTable = new double[vocabSize][vectorSize];
-
-        // --- AdamW用のモーメント配列 ---
-        double[][] mDWOut = new double[vectorSize][vocabSize];
-        double[][] vDWOut = new double[vectorSize][vocabSize];
-        double[][] mDEmbeddingTable = new double[vocabSize][vectorSize];
-        double[][] vDEmbeddingTable = new double[vocabSize][vectorSize];
-
-        double[][][][] mDWq = new double[numLayers][num_heads][vectorSize][head_size];
-        double[][][][] vDWq = new double[numLayers][num_heads][vectorSize][head_size];
-        double[][][][] mDWk = new double[numLayers][num_heads][vectorSize][head_size];
-        double[][][][] vDWk = new double[numLayers][num_heads][vectorSize][head_size];
-        double[][][][] mDWv = new double[numLayers][num_heads][vectorSize][head_size];
-        double[][][][] vDWv = new double[numLayers][num_heads][vectorSize][head_size];
-
-        double[][][] mDWGate = new double[numLayers][vectorSize][dHidden];
-        double[][][] vDWGate = new double[numLayers][vectorSize][dHidden];
-        double[][][] mDWUp = new double[numLayers][vectorSize][dHidden];
-        double[][][] vDWUp = new double[numLayers][vectorSize][dHidden];
-        double[][][] mDWDown = new double[numLayers][dHidden][vectorSize];
-        double[][][] vDWDown = new double[numLayers][dHidden][vectorSize];
-
-        double[][] globalDRmsWeightAttention = new double[numLayers][vectorSize];
-        double[][] globalDRmsWeightFfn = new double[numLayers][vectorSize];
-
-        // --- ローカル勾配（各スレッドが自分専用に使う作業机） ---
-        double[][][] localDWOut = new double[batchSize][vectorSize][vocabSize];
-        double[][][][] localDWGate = new double[batchSize][numLayers][vectorSize][vectorSize * 2];
-        double[][][][] localDWUp = new double[batchSize][numLayers][vectorSize][vectorSize * 2];
-        double[][][][] localDWDown = new double[batchSize][numLayers][vectorSize * 2][vectorSize];
-        double[][][][][] localDWq = new double[batchSize][numLayers][num_heads][vectorSize][head_size];
-        double[][][][][] localDWk = new double[batchSize][numLayers][num_heads][vectorSize][head_size];
-        double[][][][][] localDWv = new double[batchSize][numLayers][num_heads][vectorSize][head_size];
-        double[][][] localDEmbeddingTable = new double[batchSize][vocabSize][vectorSize];
-
-        double[][][] localDRmsWeightAttention = new double[batchSize][numLayers][vectorSize];
-        double[][][] localDRmsWeightFfn = new double[batchSize][numLayers][vectorSize];
 
         double[] invFreq = new double[vectorSize];
         for (int j = 0; j < vectorSize; j++) {
@@ -249,19 +204,7 @@ public class Main {
         double[][][][] attentionOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
         double[][][][] ffnOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
 
-        double[][][][] dFfnOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
-        double[][][][] dAttentionOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
-        double[][][][][] dAttentionWeights = new double[batchSize][numLayers][num_heads][maxSeqLen][maxSeqLen];
-        double[][][][][] dValue = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
-        double[][][][][] dAttentionScores = new double[batchSize][numLayers][num_heads][maxSeqLen][maxSeqLen];
-        double[][][][][] dQuery = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
-        double[][][][][] dKey = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
-        double[][][] dInputEmbeddings = new double[batchSize][maxSeqLen][vectorSize];
 
-        double[][] mRmsWeightAttention = new double[numLayers][vectorSize];
-        double[][] vRmsWeightAttention = new double[numLayers][vectorSize];
-        double[][] mRmsWeightFfn = new double[numLayers][vectorSize];
-        double[][] vRmsWeightFfn = new double[numLayers][vectorSize];
 
         String[] modenames = new String[4];
         modenames[0] = "未知のモード";
@@ -270,6 +213,78 @@ public class Main {
         modenames[3] = "ミックス学習";
 
         if (!larned) {
+
+
+            double[][][][] dFfnOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
+            double[][][][] dAttentionOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
+            double[][][][][] dAttentionWeights = new double[batchSize][numLayers][num_heads][maxSeqLen][maxSeqLen];
+            double[][][][][] dValue = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
+            double[][][][][] dAttentionScores = new double[batchSize][numLayers][num_heads][maxSeqLen][maxSeqLen];
+            double[][][][][] dQuery = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
+            double[][][][][] dKey = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
+            double[][][] dInputEmbeddings = new double[batchSize][maxSeqLen][vectorSize];
+
+
+            double[][] mRmsWeightAttention = new double[numLayers][vectorSize];
+            double[][] vRmsWeightAttention = new double[numLayers][vectorSize];
+            double[][] mRmsWeightFfn = new double[numLayers][vectorSize];
+            double[][] vRmsWeightFfn = new double[numLayers][vectorSize];
+
+
+            // --- ローカル勾配（各スレッドが自分専用に使う作業机） ---
+            double[][][] localDWOut = new double[batchSize][vectorSize][vocabSize];
+            double[][][][] localDWGate = new double[batchSize][numLayers][vectorSize][vectorSize * 2];
+            double[][][][] localDWUp = new double[batchSize][numLayers][vectorSize][vectorSize * 2];
+            double[][][][] localDWDown = new double[batchSize][numLayers][vectorSize * 2][vectorSize];
+            double[][][][][] localDWq = new double[batchSize][numLayers][num_heads][vectorSize][head_size];
+            double[][][][][] localDWk = new double[batchSize][numLayers][num_heads][vectorSize][head_size];
+            double[][][][][] localDWv = new double[batchSize][numLayers][num_heads][vectorSize][head_size];
+            double[][][] localDEmbeddingTable = new double[batchSize][vocabSize][vectorSize];
+
+            double[][][] localDRmsWeightAttention = new double[batchSize][numLayers][vectorSize];
+            double[][][] localDRmsWeightFfn = new double[batchSize][numLayers][vectorSize];
+
+
+            double[][] globalDRmsWeightAttention = new double[numLayers][vectorSize];
+            double[][] globalDRmsWeightFfn = new double[numLayers][vectorSize];
+
+            double[][][] mDWGate = new double[numLayers][vectorSize][dHidden];
+            double[][][] vDWGate = new double[numLayers][vectorSize][dHidden];
+            double[][][] mDWUp = new double[numLayers][vectorSize][dHidden];
+            double[][][] vDWUp = new double[numLayers][vectorSize][dHidden];
+            double[][][] mDWDown = new double[numLayers][dHidden][vectorSize];
+            double[][][] vDWDown = new double[numLayers][dHidden][vectorSize];
+
+            // --- AdamW用のモーメント配列 ---
+            double[][] mDWOut = new double[vectorSize][vocabSize];
+            double[][] vDWOut = new double[vectorSize][vocabSize];
+            double[][] mDEmbeddingTable = new double[vocabSize][vectorSize];
+            double[][] vDEmbeddingTable = new double[vocabSize][vectorSize];
+
+            double[][][][] mDWq = new double[numLayers][num_heads][vectorSize][head_size];
+            double[][][][] vDWq = new double[numLayers][num_heads][vectorSize][head_size];
+            double[][][][] mDWk = new double[numLayers][num_heads][vectorSize][head_size];
+            double[][][][] vDWk = new double[numLayers][num_heads][vectorSize][head_size];
+            double[][][][] mDWv = new double[numLayers][num_heads][vectorSize][head_size];
+            double[][][][] vDWv = new double[numLayers][num_heads][vectorSize][head_size];
+
+
+            // --- グローバル勾配（全スレッドの結果を最終的に合算する場所） ---
+            double[][] globalDWOut = new double[vectorSize][vocabSize];
+            double[][][] globalDWGate = new double[numLayers][vectorSize][vectorSize * 2];
+            double[][][] globalDWUp = new double[numLayers][vectorSize][vectorSize * 2];
+            double[][][] globalDWDown = new double[numLayers][vectorSize * 2][vectorSize];
+            double[][][][] globalDWq = new double[numLayers][num_heads][vectorSize][head_size];
+            double[][][][] globalDWk = new double[numLayers][num_heads][vectorSize][head_size];
+            double[][][][] globalDWv = new double[numLayers][num_heads][vectorSize][head_size];
+            double[][] globalDEmbeddingTable = new double[vocabSize][vectorSize];
+
+
+
+
+
+
+
             for (int i = 0; i < vocabSize; i++) {
                 for (int j = 0; j < vectorSize; j++) {
                     embeddingTable[i][j] = (random.nextDouble() - 0.5);
@@ -1157,6 +1172,13 @@ public class Main {
         while (true) {
             System.out.print("AIへの入力文字をどうぞ: ");
             String userInput = scanner.nextLine();
+
+            if (userInput != null && userInput.startsWith("/")) {
+                if (Objects.equals(userInput, "/exit")) {
+                    IO.println("終了します");
+                    break;
+                }
+            }
 
             String prompt = "U:" + userInput + ">A:";
             List<Integer> promptEncodedList = tokenizer.encode(prompt);
