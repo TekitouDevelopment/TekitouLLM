@@ -205,7 +205,6 @@ public class Main {
         double[][][][] ffnOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
 
 
-
         String[] modenames = new String[4];
         modenames[0] = "未知のモード";
         modenames[1] = "事前学習";
@@ -278,11 +277,6 @@ public class Main {
             double[][][][] globalDWk = new double[numLayers][num_heads][vectorSize][head_size];
             double[][][][] globalDWv = new double[numLayers][num_heads][vectorSize][head_size];
             double[][] globalDEmbeddingTable = new double[vocabSize][vectorSize];
-
-
-
-
-
 
 
             for (int i = 0; i < vocabSize; i++) {
@@ -1132,7 +1126,6 @@ public class Main {
                 elapsedSeconds = (endTime - startTime) / 1_000_000_000.0;
 
 
-
                 // Lossの計算と表示
                 if (epoch == 0 || (epoch + 1) % 1 == 0 || epoch == epochs - 1) {
                     double avgLoss = epochTotalLoss.sum() / batchSize;
@@ -1141,7 +1134,7 @@ public class Main {
             }
 
             try {
-                ModelCheckpoint.saveModel("a.omomi", numLayers, vectorSize, num_heads, dHidden, vocabSize, tokenizer.tokenToId, embeddingTable, wq, wk, wv, wGate, wUp, wDown, wOut, rmsWeightAttention, rmsWeightFfn,tokenizer.merges);
+                ModelCheckpoint.saveModel("a.omomi", numLayers, vectorSize, num_heads, dHidden, vocabSize, tokenizer.tokenToId, embeddingTable, wq, wk, wv, wGate, wUp, wDown, wOut, rmsWeightAttention, rmsWeightFfn, tokenizer.merges);
             } catch (IOException e) {
                 e.printStackTrace();
                 IO.println("重みの保存に失敗しました!");
@@ -1150,15 +1143,12 @@ public class Main {
             IO.println("学習完了!");
 
 
-
-
+            System.gc(); //一応GC呼んでみる
         }
 
-
-        // --- 対話・文字生成テスト（バッチ対応済みの配列の 0 番目を使用） ---
+// --- 対話・文字生成テスト（KVキャッシュ対応版） ---
         System.out.println("\n=== 対話・文字生成テスト ===");
         Scanner scanner = new Scanner(System.in);
-
 
         double[] logits = new double[vocabSizeLocal];
         double[] probs = new double[vocabSizeLocal];
@@ -1168,6 +1158,9 @@ public class Main {
         }
         boolean[] keep = new boolean[vocabSizeLocal];
 
+        // 推論用のKVキャッシュ（レイヤー、ヘッド、最大長、ヘッドサイズ）
+        double[][][][] keyCache = new double[numLayers][num_heads][maxSeqLen][head_size];
+        double[][][][] valueCache = new double[numLayers][num_heads][maxSeqLen][head_size];
 
         while (true) {
             System.out.print("AIへの入力文字をどうぞ: ");
@@ -1182,170 +1175,285 @@ public class Main {
 
             String prompt = "U:" + userInput + ">A:";
             List<Integer> promptEncodedList = tokenizer.encode(prompt);
-            int genSeqLen = promptEncodedList.size();
-            int[] genEncoded = new int[genSeqLen];
-            for (int i = 0; i < genSeqLen; i++) {
+            int promptLen = promptEncodedList.size();
+
+            int[] genEncoded = new int[promptLen];
+            for (int i = 0; i < promptLen; i++) {
                 genEncoded[i] = promptEncodedList.get(i);
             }
 
             System.out.print("入力: " + userInput + "  生成結果: " + prompt);
 
-            for (int step = 0; step < 300; step++) {
-                genSeqLen = genEncoded.length;
+            // キャッシュをすべて0でクリア
+            for (int l = 0; l < numLayers; l++) {
+                for (int h = 0; h < num_heads; h++) {
+                    for (int i = 0; i < maxSeqLen; i++) {
+                        Arrays.fill(keyCache[l][h][i], 0.0);
+                        Arrays.fill(valueCache[l][h][i], 0.0);
+                    }
+                }
+            }
 
-                // 推論時はバッチの [0] 番目の作業スペースを利用する
-                for (int i = 0; i < genSeqLen; i++) {
-                    int id = genEncoded[i];
-                    System.arraycopy(embeddingTable[id], 0, inputEmbeddings[0][i], 0, vectorSize);
+            // ==========================================
+            // 1. プロンプト部分を一括処理してKVキャッシュに保存
+            // ==========================================
+            for (int i = 0; i < promptLen; i++) {
+                int id = genEncoded[i];
+                System.arraycopy(embeddingTable[id], 0, inputEmbeddings[0][i], 0, vectorSize);
+
+                for (int j = 0; j < vectorSize; j++) {
+                    double angle = i * invFreq[j];
+                    if (j % 2 == 0) {
+                        inputEmbeddings[0][i][j] += Math.sin(angle);
+                    } else {
+                        inputEmbeddings[0][i][j] += Math.cos(angle);
+                    }
+                }
+            }
+
+            for (int l = 0; l < numLayers; l++) {
+                double[][] currentLayerInput = (l == 0) ? inputEmbeddings[0] : ffnOutput[0][l - 1];
+
+                double[][] normedInput = new double[promptLen][dModel];
+                for (int i = 0; i < promptLen; i++) {
+                    normedInput[i] = rmsNorm(currentLayerInput[i], rmsWeightAttention[l], 1e-5);
                 }
 
-                for (int i = 0; i < genSeqLen; i++) {
-                    for (int j = 0; j < vectorSize; j++) {
-                        double angle = i * invFreq[j];
-                        if (j % 2 == 0) {
-                            inputEmbeddings[0][i][j] += Math.sin(angle);
-                        } else {
-                            inputEmbeddings[0][i][j] += Math.cos(angle);
+                // Q, K, V を計算してキャッシュに保存
+                for (int h = 0; h < num_heads; h++) {
+                    for (int i = 0; i < promptLen; i++) {
+                        for (int j = 0; j < head_size; j++) {
+                            double sumQ = 0.0, sumK = 0.0, sumV = 0.0;
+                            for (int k = 0; k < dModel; k++) {
+                                sumQ += normedInput[i][k] * wq[l][h][k][j];
+                                sumK += normedInput[i][k] * wk[l][h][k][j];
+                                sumV += normedInput[i][k] * wv[l][h][k][j];
+                            }
+                            query[0][l][i][h][j] = sumQ;
+                            keyCache[l][h][i][j] = sumK;
+                            valueCache[l][h][i][j] = sumV;
                         }
                     }
                 }
-                for (int l = 0; l < numLayers; l++) {
-                    double[][] currentLayerInput = (l == 0) ? inputEmbeddings[0] : ffnOutput[0][l - 1];
 
-                    //RMSNorm
-                    double[][] normedInput = new double[genSeqLen][dModel];
-                    for (int i = 0; i < genSeqLen; i++) {
-                        normedInput[i] = rmsNorm(currentLayerInput[i], rmsWeightAttention[l], 1e-5);
-                    }
-
-                    // 1. Q, K, V の計算（ヘッドごとに計算）
-                    for (int h = 0; h < num_heads; h++) {
-                        for (int i = 0; i < genSeqLen; i++) {
-                            for (int j = 0; j < head_size; j++) {
-                                double sumQ = 0.0, sumK = 0.0, sumV = 0.0;
-                                for (int k = 0; k < dModel; k++) {
-                                    sumQ += normedInput[i][k] * wq[l][h][k][j];
-                                    sumK += normedInput[i][k] * wk[l][h][k][j];
-                                    sumV += normedInput[i][k] * wv[l][h][k][j];
+                // Attention Score (プロンプト内)
+                double scale = Math.sqrt(head_size);
+                for (int h = 0; h < num_heads; h++) {
+                    for (int i = 0; i < promptLen; i++) {
+                        for (int j = 0; j < promptLen; j++) {
+                            if (j > i) {
+                                attentionScores[0][l][h][i][j] = -1e9;
+                            } else {
+                                double dotProduct = 0.0;
+                                for (int k = 0; k < head_size; k++) {
+                                    dotProduct += query[0][l][i][h][k] * keyCache[l][h][j][k];
                                 }
-                                query[0][l][i][h][j] = sumQ;
-                                key[0][l][i][h][j] = sumK;
-                                value[0][l][i][h][j] = sumV;
+                                attentionScores[0][l][h][i][j] = dotProduct / scale;
                             }
                         }
                     }
+                }
 
-                    // 2. アテンションスコアの計算（ヘッドごと、scaleは head_size の平方根）
+                // Softmax
+                for (int h = 0; h < num_heads; h++) {
+                    for (int i = 0; i < promptLen; i++) {
+                        double max = attentionScores[0][l][h][i][0];
+                        for (int j = 1; j < promptLen; j++) {
+                            if (attentionScores[0][l][h][i][j] > max) max = attentionScores[0][l][h][i][j];
+                        }
+                        double sum = 0.0;
+                        double[] expRow = new double[promptLen];
+                        for (int j = 0; j < promptLen; j++) {
+                            expRow[j] = Math.exp(attentionScores[0][l][h][i][j] - max);
+                            sum += expRow[j];
+                        }
+                        for (int j = 0; j < promptLen; j++) {
+                            attentionWeights[0][l][h][i][j] = expRow[j] / sum;
+                        }
+                    }
+                }
+
+                // Attention Output & Residual
+                for (int i = 0; i < promptLen; i++) {
+                    int outCol = 0;
+                    for (int h = 0; h < num_heads; h++) {
+                        for (int j = 0; j < head_size; j++) {
+                            double weightedSum = 0.0;
+                            for (int k = 0; k < promptLen; k++) {
+                                weightedSum += attentionWeights[0][l][h][i][k] * valueCache[l][h][k][j];
+                            }
+                            attentionOutput[0][l][i][outCol++] = weightedSum;
+                        }
+                    }
+                    for (int j = 0; j < dModel; j++) {
+                        attentionOutput[0][l][i][j] += currentLayerInput[i][j];
+                    }
+                }
+
+                // FFN
+                double[][] normedAttentionOutput = new double[promptLen][dModel];
+                for (int i = 0; i < promptLen; i++) {
+                    normedAttentionOutput[i] = rmsNorm(attentionOutput[0][l][i], rmsWeightFfn[l], 1e-5);
+                }
+
+                for (int i = 0; i < promptLen; i++) {
+                    double[] gate = new double[dHidden];
+                    double[] up = new double[dHidden];
+                    for (int j = 0; j < dHidden; j++) {
+                        double sumGate = 0.0, sumUp = 0.0;
+                        for (int k = 0; k < dModel; k++) {
+                            double val = normedAttentionOutput[i][k];
+                            sumGate += val * wGate[l][k][j];
+                            sumUp += val * wUp[l][k][j];
+                        }
+                        double sigmoid = 1.0 / (1.0 + Math.exp(-sumGate));
+                        gate[j] = sumGate * sigmoid;
+                        up[j] = sumUp;
+                    }
+                    double[] gatedValue = new double[dHidden];
+                    for (int j = 0; j < dHidden; j++) {
+                        gatedValue[j] = gate[j] * up[j];
+                    }
+                    for (int j = 0; j < dModel; j++) {
+                        double sum = 0.0;
+                        for (int k = 0; k < dHidden; k++) {
+                            sum += gatedValue[k] * wDown[l][k][j];
+                        }
+                        ffnOutput[0][l][i][j] = sum + attentionOutput[0][l][i][j];
+                    }
+                }
+            }
+
+
+            // ==========================================
+            // 2. 1トークンずつ生成するループ（KVキャッシュを使用）
+            // ==========================================
+            for (int step = 0; step < 300; step++) {
+                int currentSeqLen = genEncoded.length;
+                int lastTokenId = genEncoded[currentSeqLen - 1];
+                int pos = currentSeqLen - 1; // 現在のトークンの絶対位置
+
+                if (lastTokenId == tokenizer.tokenToId.getOrDefault("■", -1)) {
+                    break;
+                }
+
+                // 最新の1トークン分の埋め込みと位置エンコーディング
+                System.arraycopy(embeddingTable[lastTokenId], 0, inputEmbeddings[0][0], 0, vectorSize);
+                for (int j = 0; j < vectorSize; j++) {
+                    double angle = pos * invFreq[j];
+                    if (j % 2 == 0) {
+                        inputEmbeddings[0][0][j] += Math.sin(angle);
+                    } else {
+                        inputEmbeddings[0][0][j] += Math.cos(angle);
+                    }
+                }
+
+                for (int l = 0; l < numLayers; l++) {
+                    double[] currentLayerInput = (l == 0) ? inputEmbeddings[0][0] : ffnOutput[0][l - 1][pos];
+                    double[] normedInput = rmsNorm(currentLayerInput, rmsWeightAttention[l], 1e-5);
+
+                    // 最新のQを計算し、KとVをキャッシュの [pos] の位置に直接保存
+                    for (int h = 0; h < num_heads; h++) {
+                        for (int j = 0; j < head_size; j++) {
+                            double sumQ = 0.0, sumK = 0.0, sumV = 0.0;
+                            for (int k = 0; k < dModel; k++) {
+                                sumQ += normedInput[k] * wq[l][h][k][j];
+                                sumK += normedInput[k] * wk[l][h][k][j];
+                                sumV += normedInput[k] * wv[l][h][k][j];
+                            }
+                            query[0][l][0][h][j] = sumQ;
+                            keyCache[l][h][pos][j] = sumK;
+                            valueCache[l][h][pos][j] = sumV;
+                        }
+                    }
+
+                    // アテンションスコア：最新の位置（pos）から、過去の全位置（0 〜 pos）のキャッシュを参照
                     double scale = Math.sqrt(head_size);
                     for (int h = 0; h < num_heads; h++) {
-                        for (int i = 0; i < genSeqLen; i++) {
-                            for (int j = 0; j < genSeqLen; j++) {
-                                if (j > i) {
-                                    attentionScores[0][l][h][i][j] = -1e9;
-                                } else {
-                                    double dotProduct = 0.0;
-                                    for (int k = 0; k < head_size; k++) {
-                                        dotProduct += query[0][l][i][h][k] * key[0][l][j][h][k];
-                                    }
-                                    attentionScores[0][l][h][i][j] = dotProduct / scale;
-                                }
+                        for (int j = 0; j <= pos; j++) {
+                            double dotProduct = 0.0;
+                            for (int k = 0; k < head_size; k++) {
+                                dotProduct += query[0][l][0][h][k] * keyCache[l][h][j][k];
                             }
+                            attentionScores[0][l][h][0][j] = dotProduct / scale;
+                        }
+
+                        // Softmax (0 〜 pos)
+                        double max = attentionScores[0][l][h][0][0];
+                        for (int j = 1; j <= pos; j++) {
+                            if (attentionScores[0][l][h][0][j] > max) max = attentionScores[0][l][h][0][j];
+                        }
+                        double sum = 0.0;
+                        double[] expRow = new double[pos + 1];
+                        for (int j = 0; j <= pos; j++) {
+                            expRow[j] = Math.exp(attentionScores[0][l][h][0][j] - max);
+                            sum += expRow[j];
+                        }
+                        for (int j = 0; j <= pos; j++) {
+                            attentionWeights[0][l][h][0][j] = expRow[j] / sum;
                         }
                     }
 
-                    // 3. Softmax（ヘッドごとに計算）
+                    // Attention Output (キャッシュからVを取得)
+                    int outCol = 0;
                     for (int h = 0; h < num_heads; h++) {
-                        for (int i = 0; i < genSeqLen; i++) {
-                            double max = attentionScores[0][l][h][i][0];
-                            for (int j = 1; j < genSeqLen; j++) {
-                                if (attentionScores[0][l][h][i][j] > max) {
-                                    max = attentionScores[0][l][h][i][j];
-                                }
+                        for (int j = 0; j < head_size; j++) {
+                            double weightedSum = 0.0;
+                            for (int k = 0; k <= pos; k++) {
+                                weightedSum += attentionWeights[0][l][h][0][k] * valueCache[l][h][k][j];
                             }
-
-                            double sum = 0.0;
-                            double[] expRow = new double[genSeqLen];
-                            for (int j = 0; j < genSeqLen; j++) {
-                                expRow[j] = Math.exp(attentionScores[0][l][h][i][j] - max);
-                                sum += expRow[j];
-                            }
-
-                            for (int j = 0; j < genSeqLen; j++) {
-                                attentionWeights[0][l][h][i][j] = expRow[j] / sum;
-                            }
+                            attentionOutput[0][l][0][outCol++] = weightedSum;
                         }
                     }
 
-                    // 4. Attention Output（各ヘッドの結果を Concat して残差接続）
-                    for (int i = 0; i < genSeqLen; i++) {
-                        int outCol = 0;
-                        for (int h = 0; h < num_heads; h++) {
-                            for (int j = 0; j < head_size; j++) {
-                                double weightedSum = 0.0;
-                                for (int k = 0; k < genSeqLen; k++) {
-                                    weightedSum += attentionWeights[0][l][h][i][k] * value[0][l][k][h][j];
-                                }
-                                attentionOutput[0][l][i][outCol++] = weightedSum;
-                            }
-                        }
-                        // 残差接続（Residual Connection）
-                        for (int j = 0; j < dModel; j++) {
-                            attentionOutput[0][l][i][j] += currentLayerInput[i][j];
-                        }
+                    // 残差接続
+                    for (int j = 0; j < dModel; j++) {
+                        attentionOutput[0][l][0][j] += currentLayerInput[j];
                     }
 
-
-                    // ★【追加】FFNに入る前にRMSNormをかける
-                    double[][] normedAttentionOutput = new double[genSeqLen][dModel];
-                    for (int i = 0; i < genSeqLen; i++) {
-                        normedAttentionOutput[i] = rmsNorm(attentionOutput[0][l][i], rmsWeightFfn[l], 1e-5);
+                    // FFN (最新の1トークン分)
+                    double[] normedAttentionOutput = rmsNorm(attentionOutput[0][l][0], rmsWeightFfn[l], 1e-5);
+                    double[] gate = new double[dHidden];
+                    double[] up = new double[dHidden];
+                    for (int j = 0; j < dHidden; j++) {
+                        double sumGate = 0.0, sumUp = 0.0;
+                        for (int k = 0; k < dModel; k++) {
+                            double val = normedAttentionOutput[k];
+                            sumGate += val * wGate[l][k][j];
+                            sumUp += val * wUp[l][k][j];
+                        }
+                        double sigmoid = 1.0 / (1.0 + Math.exp(-sumGate));
+                        gate[j] = sumGate * sigmoid;
+                        up[j] = sumUp;
                     }
 
-                    //FFN
-                    for (int i = 0; i < genSeqLen; i++) {
-                        double[] gate = new double[dHidden];
-                        double[] up = new double[dHidden];
-                        for (int j = 0; j < dHidden; j++) {
-                            double sumGate = 0.0, sumUp = 0.0;
-                            for (int k = 0; k < dModel; k++) {
-                                double val = normedAttentionOutput[i][k];
-                                sumGate += val * wGate[l][k][j];
-                                sumUp += val * wUp[l][k][j];
-                            }
-                            double sigmoid = 1.0 / (1.0 + Math.exp(-sumGate));
-                            gate[j] = sumGate * sigmoid;
-                            up[j] = sumUp;
-                        }
+                    double[] gatedValue = new double[dHidden];
+                    for (int j = 0; j < dHidden; j++) {
+                        gatedValue[j] = gate[j] * up[j];
+                    }
 
-                        double[] gatedValue = new double[dHidden];
-                        for (int j = 0; j < dHidden; j++) {
-                            gatedValue[j] = gate[j] * up[j];
+                    for (int j = 0; j < dModel; j++) {
+                        double sum = 0.0;
+                        for (int k = 0; k < dHidden; k++) {
+                            sum += gatedValue[k] * wDown[l][k][j];
                         }
-
-                        for (int j = 0; j < dModel; j++) {
-                            double sum = 0.0;
-                            for (int k = 0; k < dHidden; k++) {
-                                sum += gatedValue[k] * wDown[l][k][j];
-                            }
-                            ffnOutput[0][l][i][j] = sum + attentionOutput[0][l][i][j];
-                        }
+                        ffnOutput[0][l][pos][j] = sum + attentionOutput[0][l][0][j];
                     }
                 }
 
-                int lastIdx = genSeqLen - 1;
-
-                // 中身をリセットして使い回す
+                // 最終レイヤーの出力から次のトークンを予測
                 Arrays.fill(logits, 0.0);
                 for (int j = 0; j < vocabSizeLocal; j++) {
                     double sum = 0.0;
                     for (int k = 0; k < dModel; k++) {
-                        sum += ffnOutput[0][numLayers - 1][lastIdx][k] * wOut[k][j];
+                        sum += ffnOutput[0][numLayers - 1][pos][k] * wOut[k][j];
                     }
                     logits[j] = sum;
                 }
 
+                // サンプリング処理
                 double temperature = 0.7;
-                Arrays.fill(probs, 0.0); // 中身をリセット
+                Arrays.fill(probs, 0.0);
                 double sumExp = 0.0;
                 double maxLogit = logits[0];
                 for (int j = 1; j < vocabSizeLocal; j++) {
@@ -1363,26 +1471,20 @@ public class Main {
                     probs[j] /= sumExp;
                 }
 
-                // ==========================================
-                // Top-p（ニュークレアス・サンプリング）
-                // ==========================================
-                double topP = 0.9; // 確率の累計が90%に達するまでを候補にする
-
-                // vocabIndices はあらかじめ作ってあるので、そのままソートに使う
+                double topP = 0.9;
                 Arrays.sort(vocabIndices, (a, b) -> Double.compare(probs[b], probs[a]));
 
                 double cumulativeProb = 0.0;
-                Arrays.fill(keep, false); // 中身をリセット
+                Arrays.fill(keep, false);
                 for (int j = 0; j < vocabSizeLocal; j++) {
                     int idx = vocabIndices[j];
                     cumulativeProb += probs[idx];
                     keep[idx] = true;
                     if (cumulativeProb >= topP) {
-                        break; // 90%に達した時点で終了
+                        break;
                     }
                 }
 
-                // 残らなかったものの確率を0にして、残った分だけで確率を再計算
                 double newSum = 0.0;
                 for (int j = 0; j < vocabSizeLocal; j++) {
                     if (!keep[j]) {
@@ -1417,9 +1519,9 @@ public class Main {
 
                 System.out.print(predictedToken);
 
-                int[] nextGenEncoded = new int[genSeqLen + 1];
-                System.arraycopy(genEncoded, 0, nextGenEncoded, 0, genSeqLen);
-                nextGenEncoded[genSeqLen] = bestNextId;
+                int[] nextGenEncoded = new int[currentSeqLen + 1];
+                System.arraycopy(genEncoded, 0, nextGenEncoded, 0, currentSeqLen);
+                nextGenEncoded[currentSeqLen] = bestNextId;
                 genEncoded = nextGenEncoded;
             }
             System.out.println();
