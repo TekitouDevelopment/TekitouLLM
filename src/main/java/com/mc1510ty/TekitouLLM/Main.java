@@ -195,8 +195,10 @@ public class Main {
         double[][][][][] key = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
         double[][][][][] value = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
 
-        double[][][][][] attentionScores = new double[batchSize][numLayers][num_heads][maxSeqLen][maxSeqLen];
-        double[][][][][] attentionWeights = new double[batchSize][numLayers][num_heads][maxSeqLen][maxSeqLen];
+        int attentionSize = batchSize * numLayers * num_heads * maxSeqLen * maxSeqLen;
+        double[] attentionScores = new double[attentionSize];
+        double[] attentionWeights = new double[attentionSize];
+
 
         double[][][][] attentionOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
         double[][][][] ffnOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
@@ -212,9 +214,9 @@ public class Main {
 
             double[][][][] dFfnOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
             double[][][][] dAttentionOutput = new double[batchSize][numLayers][maxSeqLen][vectorSize];
-            double[][][][][] dAttentionWeights = new double[batchSize][numLayers][num_heads][maxSeqLen][maxSeqLen];
+            double[] dAttentionWeights = new double[attentionSize];
             double[][][][][] dValue = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
-            double[][][][][] dAttentionScores = new double[batchSize][numLayers][num_heads][maxSeqLen][maxSeqLen];
+            double[] dAttentionScores = new double[attentionSize];
             double[][][][][] dQuery = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
             double[][][][][] dKey = new double[batchSize][numLayers][maxSeqLen][num_heads][head_size];
             double[][][] dInputEmbeddings = new double[batchSize][maxSeqLen][vectorSize];
@@ -471,51 +473,63 @@ public class Main {
                         }
 
                         // 9. Attention スコア（ヘッドごとに計算）
-                        double scale = Math.sqrt(head_size); // ★全体のdModelではなく、head_sizeの平方根にする
+                        double scale = Math.sqrt(head_size);
 
                         for (int h = 0; h < num_heads; h++) { // ヘッドのループを追加
                             for (int i = 0; i < seqLen; i++) {
-                                // attentionScores もヘッドごとの次元を持つように形を変える必要があります
-                                Arrays.fill(attentionScores[b][layer][h][i], 0, seqLen, -1e9);
+                                int startIndex = getAttentionIndex(b, layer, h, i, 0, numLayers, num_heads, maxSeqLen);
+
+                                Arrays.fill(attentionScores, startIndex, startIndex + seqLen, -1e9);
                                 for (int j = 0; j <= i; j++) {
                                     double dotProduct = 0.0;
                                     for (int k = 0; k < head_size; k++) { // 内積はヘッド内の次元（head_size）で計算
                                         dotProduct += query[b][layer][i][h][k] * key[b][layer][j][h][k];
                                     }
-                                    attentionScores[b][layer][h][i][j] = dotProduct / scale;
+                                    attentionScores[startIndex + j] = dotProduct / scale;
                                 }
                             }
                         }
 
-// 10. Softmax（ヘッドごとに独立して計算）
-                        for (int h = 0; h < num_heads; h++) { // ヘッドのループを追加
+                        // 10. Softmax（ヘッドごとに独立して計算）
+                        for (int h = 0; h < num_heads; h++) {
                             for (int i = 0; i < seqLen; i++) {
-                                double max = attentionScores[b][layer][h][i][0];
+                                // インデックスを計算
+                                int startIndex = getAttentionIndex(b, layer, h, i, 0, numLayers, num_heads, seqLen);
+
+                                // maxの取得（j = 0）
+                                double max = attentionScores[startIndex];
                                 for (int j = 1; j < seqLen; j++) {
-                                    if (attentionScores[b][layer][h][i][j] > max) {
-                                        max = attentionScores[b][layer][h][i][j];
+                                    double score = attentionScores[startIndex + j];
+                                    if (score > max) {
+                                        max = score;
                                     }
                                 }
+
                                 double sum = 0.0;
                                 double[] expRow = new double[seqLen];
                                 for (int j = 0; j < seqLen; j++) {
-                                    expRow[j] = Math.exp(attentionScores[b][layer][h][i][j] - max);
+                                    expRow[j] = Math.exp(attentionScores[startIndex + j] - max);
                                     sum += expRow[j];
                                 }
+
                                 for (int j = 0; j < seqLen; j++) {
-                                    attentionWeights[b][layer][h][i][j] = expRow[j] / sum;
+                                    // attentionWeights も1次元化しているので startIndex + j を使う
+                                    attentionWeights[startIndex + j] = expRow[j] / sum;
                                 }
                             }
                         }
 
-// 11. Attention Output（各ヘッドの結果を Concatenate して元の次元に戻す ＋ 残差接続）
+                        // 11. Attention Output（各ヘッドの結果を Concatenate して元の次元に戻す ＋ 残差接続）
                         for (int i = 0; i < seqLen; i++) {
                             int outCol = 0; // 結合していくときのインデックス用
                             for (int h = 0; h < num_heads; h++) {
+                                // ★ここで h ごとの startIndex を計算
+                                int startIndex = getAttentionIndex(b, layer, h, i, 0, numLayers, num_heads, seqLen);
+
                                 for (int j = 0; j < head_size; j++) {
                                     double weightedSum = 0.0;
                                     for (int k = 0; k < seqLen; k++) {
-                                        weightedSum += attentionWeights[b][layer][h][i][k] * value[b][layer][k][h][j];
+                                        weightedSum += attentionWeights[startIndex + k] * value[b][layer][k][h][j];
                                     }
                                     // 各ヘッドの計算結果を横に繋ぎ合わせていく（Concat）
                                     attentionOutput[b][layer][i][outCol++] = weightedSum;
@@ -580,8 +594,10 @@ public class Main {
                                 Arrays.fill(dValue[b][l][i][h], 0.0);
                             }
                             for (int i = 0; i < seqLen; i++) {
-                                Arrays.fill(dAttentionWeights[b][l][h][i], 0.0);
-                                Arrays.fill(dAttentionScores[b][l][h][i], 0.0);
+                                int startIndex = getAttentionIndex(b, l, h, i, 0, numLayers, num_heads, seqLen);
+
+                                Arrays.fill(dAttentionWeights, startIndex, startIndex + seqLen, 0.0);
+                                Arrays.fill(dAttentionScores, startIndex, startIndex + seqLen, 0.0);
                             }
                         }
                     }
@@ -757,45 +773,58 @@ public class Main {
 // 1. Attention Output から Attention Weights と Value への勾配（Concatをバラす）
                         for (int i = 0; i < seqLen; i++) {
                             for (int h = 0; h < num_heads; h++) {
+                                // ★ここで h と i に応じた startIndex を取得
+                                int startIndex = getAttentionIndex(b, l, h, i, 0, numLayers, num_heads, seqLen);
+
                                 for (int j = 0; j < head_size; j++) {
                                     int outCol = h * head_size + j;
                                     double gradOut = dAttentionOutput[b][l][i][outCol];
                                     for (int k = 0; k < seqLen; k++) {
-                                        dAttentionWeights[b][l][h][i][k] += gradOut * value[b][l][k][h][j];
-                                        dValue[b][l][k][h][j] += gradOut * attentionWeights[b][l][h][i][k];
+                                        // ★1次元のインデックス（startIndex + k）に書き換え
+                                        dAttentionWeights[startIndex + k] += gradOut * value[b][l][k][h][j];
+                                        dValue[b][l][k][h][j] += gradOut * attentionWeights[startIndex + k];
                                     }
                                 }
                             }
                         }
 
-// 2. Softmax の逆伝播（ヘッドごとに計算）
+                        // 2. Softmax の逆伝播（ヘッドごとに計算）
                         for (int h = 0; h < num_heads; h++) {
                             for (int i = 0; i < seqLen; i++) {
+                                // ★startIndex を取得
+                                int startIndex = getAttentionIndex(b, l, h, i, 0, numLayers, num_heads, seqLen);
+
                                 double dotSumWeights = 0.0;
                                 for (int k = 0; k < seqLen; k++) {
-                                    dotSumWeights += dAttentionWeights[b][l][h][i][k] * attentionWeights[b][l][h][i][k];
+                                    // ★startIndex + k でアクセス
+                                    dotSumWeights += dAttentionWeights[startIndex + k] * attentionWeights[startIndex + k];
                                 }
 
                                 for (int j = 0; j < seqLen; j++) {
-                                    double y_j = attentionWeights[b][l][h][i][j];
-                                    dAttentionScores[b][l][h][i][j] = y_j * (dAttentionWeights[b][l][h][i][j] - dotSumWeights);
+                                    // ★startIndex + j でアクセス
+                                    double y_j = attentionWeights[startIndex + j];
+                                    dAttentionScores[startIndex + j] = y_j * (dAttentionWeights[startIndex + j] - dotSumWeights);
                                 }
                             }
 
                             // マスク処理（未来の情報を隠すための因果マスクの逆伝播対応）
                             for (int i = 0; i < seqLen; i++) {
+                                // ★ここでも i ごとに startIndex を取得
+                                int startIndex = getAttentionIndex(b, l, h, i, 0, numLayers, num_heads, seqLen);
                                 for (int j = 0; j < seqLen; j++) {
-                                    if (j > i) dAttentionScores[b][l][h][i][j] = 0.0;
+                                    // ★startIndex + j でアクセス
+                                    if (j > i) dAttentionScores[startIndex + j] = 0.0;
                                 }
                             }
                         }
 
-// 3. Query と Key への勾配計算（ヘッドごと、scaleは head_size の平方根）
+                        // 3. Query と Key への勾配計算（ヘッドごと、scaleは head_size の平方根）
                         double scale = Math.sqrt(head_size);
                         for (int h = 0; h < num_heads; h++) {
                             for (int i = 0; i < seqLen; i++) {
+                                int startIndex = getAttentionIndex(b, l, h, i, 0, numLayers, num_heads, seqLen);
                                 for (int j = 0; j < seqLen; j++) {
-                                    double dScore = dAttentionScores[b][l][h][i][j] / scale;
+                                    double dScore = dAttentionScores[startIndex + j] / scale;
                                     for (int k = 0; k < head_size; k++) {
                                         dQuery[b][l][i][h][k] += dScore * key[b][l][j][h][k];
                                         dKey[b][l][j][h][k] += dScore * query[b][l][i][h][k];
@@ -804,7 +833,7 @@ public class Main {
                             }
                         }
 
-// 4. 残差接続の勾配（Attention Output から入力側へそのまま流す）
+                        // 4. 残差接続の勾配（Attention Output から入力側へそのまま流す）
                         for (int i = 0; i < seqLen; i++) {
                             for (int k = 0; k < vectorSize; k++) {
                                 double gradOut = dAttentionOutput[b][l][i][k];
@@ -1295,15 +1324,18 @@ public class Main {
                 double scale = Math.sqrt(head_size);
                 for (int h = 0; h < num_heads; h++) {
                     for (int i = 0; i < promptLen; i++) {
+                        // startIndex を取得（b = 0）
+                        int startIndex = getAttentionIndex(0, l, h, i, 0, numLayers, num_heads, maxSeqLen);
+
                         for (int j = 0; j < promptLen; j++) {
                             if (j > i) {
-                                attentionScores[0][l][h][i][j] = -1e9;
+                                attentionScores[startIndex + j] = -1e9;
                             } else {
                                 double dotProduct = 0.0;
                                 for (int k = 0; k < head_size; k++) {
                                     dotProduct += query[0][l][i][h][k] * keyCache[l][h][j][k];
                                 }
-                                attentionScores[0][l][h][i][j] = dotProduct / scale;
+                                attentionScores[startIndex + j] = dotProduct / scale;
                             }
                         }
                     }
@@ -1312,18 +1344,20 @@ public class Main {
                 // Softmax
                 for (int h = 0; h < num_heads; h++) {
                     for (int i = 0; i < promptLen; i++) {
-                        double max = attentionScores[0][l][h][i][0];
+                        int startIndex = getAttentionIndex(0, l, h, i, 0, numLayers, num_heads, maxSeqLen);
+
+                        double max = attentionScores[startIndex];
                         for (int j = 1; j < promptLen; j++) {
-                            if (attentionScores[0][l][h][i][j] > max) max = attentionScores[0][l][h][i][j];
+                            if (attentionScores[startIndex + j] > max) max = attentionScores[startIndex + j];
                         }
                         double sum = 0.0;
                         double[] expRow = new double[promptLen];
                         for (int j = 0; j < promptLen; j++) {
-                            expRow[j] = Math.exp(attentionScores[0][l][h][i][j] - max);
+                            expRow[j] = Math.exp(attentionScores[startIndex + j] - max);
                             sum += expRow[j];
                         }
                         for (int j = 0; j < promptLen; j++) {
-                            attentionWeights[0][l][h][i][j] = expRow[j] / sum;
+                            attentionWeights[startIndex + j] = expRow[j] / sum;
                         }
                     }
                 }
@@ -1332,10 +1366,11 @@ public class Main {
                 for (int i = 0; i < promptLen; i++) {
                     int outCol = 0;
                     for (int h = 0; h < num_heads; h++) {
+                        int startIndex = getAttentionIndex(0, l, h, i, 0, numLayers, num_heads, maxSeqLen);
                         for (int j = 0; j < head_size; j++) {
                             double weightedSum = 0.0;
                             for (int k = 0; k < promptLen; k++) {
-                                weightedSum += attentionWeights[0][l][h][i][k] * valueCache[l][h][k][j];
+                                weightedSum += attentionWeights[startIndex + k] * valueCache[l][h][k][j];
                             }
                             attentionOutput[0][l][i][outCol++] = weightedSum;
                         }
@@ -1449,43 +1484,56 @@ public class Main {
                             valueCache[l][h][pos][j] = sumV;
                         }
                     }
-
-                    // アテンションスコア：位置 pos から、過去の全位置（0 〜 pos）のキャッシュを参照
+// アテンションスコア：位置 pos から、過去の全位置（0 〜 pos）のキャッシュを参照
                     double scale = Math.sqrt(head_size);
                     for (int h = 0; h < num_heads; h++) {
+                        // ★ ここで pos 位置における行の先頭インデックスを取得します
+                        int startIndex = getAttentionIndex(0, l, h, pos, 0, numLayers, num_heads, maxSeqLen);
+
                         for (int j = 0; j <= pos; j++) {
                             double dotProduct = 0.0;
                             for (int k = 0; k < head_size; k++) {
-                                dotProduct += query[0][l][pos][h][k] * keyCache[l][h][j][k]; // [0] -> [pos] に修正
+                                dotProduct += query[0][l][pos][h][k] * keyCache[l][h][j][k];
                             }
-                            attentionScores[0][l][h][pos][j] = dotProduct / scale; // [0] -> [pos] に修正
+                            // ★ 1次元配列に書き換え
+                            attentionScores[startIndex + j] = dotProduct / scale;
                         }
 
                         // Softmax (0 〜 pos)
-                        double max = attentionScores[0][l][h][pos][0];
+                        // 先頭（j = 0）の要素をセット
+                        double max = attentionScores[startIndex];
                         for (int j = 1; j <= pos; j++) {
-                            if (attentionScores[0][l][h][pos][j] > max) max = attentionScores[0][l][h][pos][j];
+                            double score = attentionScores[startIndex + j];
+                            if (score > max) {
+                                max = score;
+                            }
                         }
+
                         double sum = 0.0;
                         double[] expRow = new double[pos + 1];
                         for (int j = 0; j <= pos; j++) {
-                            expRow[j] = Math.exp(attentionScores[0][l][h][pos][j] - max);
+                            expRow[j] = Math.exp(attentionScores[startIndex + j] - max);
                             sum += expRow[j];
                         }
+
                         for (int j = 0; j <= pos; j++) {
-                            attentionWeights[0][l][h][pos][j] = expRow[j] / sum; // [0] -> [pos] に修正
+                            attentionWeights[startIndex + j] = expRow[j] / sum;
                         }
                     }
 
                     // Attention Output (キャッシュからVを取得)
                     int outCol = 0;
                     for (int h = 0; h < num_heads; h++) {
+                        // h ごとの startIndex を取得
+                        int startIndex = getAttentionIndex(0, l, h, pos, 0, numLayers, num_heads, maxSeqLen);
+
                         for (int j = 0; j < head_size; j++) {
                             double weightedSum = 0.0;
                             for (int k = 0; k <= pos; k++) {
-                                weightedSum += attentionWeights[0][l][h][pos][k] * valueCache[l][h][k][j]; // [0] -> [pos]
+                                // 1次元配列から取得
+                                weightedSum += attentionWeights[startIndex + k] * valueCache[l][h][k][j];
                             }
-                            attentionOutput[0][l][pos][outCol++] = weightedSum; // [0] -> [pos]
+                            attentionOutput[0][l][pos][outCol++] = weightedSum;
                         }
                     }
 
@@ -1634,5 +1682,10 @@ public class Main {
             }
         }
         return vocabIndices[0];
+    }
+
+    public static int getAttentionIndex(int b, int l, int h, int i, int j,
+                                        int numLayers, int numHeads, int maxSeqLen) {
+        return (((b * numLayers + l) * numHeads + h) * maxSeqLen + i) * maxSeqLen + j;
     }
 }
