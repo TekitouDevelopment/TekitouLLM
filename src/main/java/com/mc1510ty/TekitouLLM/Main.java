@@ -1,11 +1,18 @@
 package com.mc1510ty.TekitouLLM;
 
+import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
+import java.util.spi.AbstractResourceBundleProvider;
 
 public class Main {
 
     static void main() {
+
+        Scanner scanner = new Scanner(System.in);
 
         IO.println("=======================================================");
         IO.println(" 適当LLM (C) 2026 TekitouDevelopment, 2023-2026 1510ty");
@@ -14,60 +21,42 @@ public class Main {
         long seed = 12345L;
         Random random = new Random(seed);
 
-        // 1. 複数の会話パターン（データセット）を用意する
-
-
-        String[] pretrainDataset = {
-                "絶縁ゲートバイポーラトランジスタは半導体素子のひとつで、NPNPの4層からなりMOSゲートSCRまたはMOSゲートサイリスタと同じ構造でありながら、全動作領域でサイリスタ動作を完全に抑え込み、トランジスタ動作のみをさせるように設計した、MOSゲートで電流を制御するバイポーラトランジスタである。電力制御の用途で使用される。■",
-                "この方針文書は、著作権の対象となっている著作物であって、一般公衆に開放されている屋外の場所、または一般公衆の見やすい屋外の場所に恒常的に設置された美術の著作物について、その著作権法上の扱いについて説明するとともに、当該著作物を被写体とする写真をウィキペディア日本語版において利用する際に守るべき事項を定めたものです。■",
-                "被写体である美術著作物の題号と著作者名を画像ページに記載する。題号と著作者名が設置場所に表示されていない場合であっても、公表された文献に基づく調査を行い、それらが判明すれば記載する。一方、調査を行っても容易に判明しない場合は、記載する必要はない。また、著作者の意思により非公開としていると認められる場合には、記載してはならない。■",
-                "画像は、被写体である美術著作物に密接に関連する事柄が記述されている1以上の記事（標準名前空間）で表示されなければならない。記事における画像表示は、画像のアップロード後すみやかに行い、将来、記事において画像を使用したいという漠然とした意思があるにすぎない状態では、画像のアップロードを避けること。■",
-                "日米いずれの国の著作権法においても、著作物を被写体とする写真は、被写体である著作物の複製物または二次的著作物として扱われ、当該写真の利用に対しては、被写体である著作物の著作権の効力が及びます（日本国著作権法21条、28条、17 U.S.C. §102(a), §103）。したがって、日米両国の著作権法の下で、当該写真を被写体の著作物の著作権者の許諾を得ることなく適法に利用するには、両国の著作権法における著作権の制限規定に基づく必要があります。■",
-                "東武10000系電車は、1983年（昭和58年）に登場した東武鉄道の通勤形電車。■",
-                "ベースとなる10000型電車と、マイナーチェンジ車として1988年（昭和63年）に登場した10030型電車、VVVFインバータ制御試作車として1988年に登場した10080型電車にの3種に分類される。■",
-                "Bve trainsim は、列車の運転をシミュレーションする Windows 用ゲームで、個人で制作しているフリーソフトです。■",
-                "自分の好きな路線や車両を作成して運転することができます。ユーザーの皆さんが作成した多くの路線データや車両データがウェブ上に公開されています。データをダウンロードして組み込めば、運転できる路線や車両を増やすことができます。■",
-                "Vulkan（ヴァルカン）は、クロノス・グループ（英: Khronos Group）が策定している、「PCやコンソールから、携帯電話や組込みプラットフォームに至るまで、あらゆるデバイスで使われる最先端のGPUに高効率かつクロスプラットフォーム型のアクセスを実現する、新世代のグラフィックス/コンピュートAPI」で、オープンスタンダード・ロイヤリティフリー・クロスプラットフォームとして提唱されている。Vulkan 1.0の仕様の公開日は2016年2月16日である。■",
-                "グラフィックスハードウェア層に近いローレベル (low level) な制御を目的としており、これによりオーバーヘッドを低減し、ハードウェアの性能を限界まで引き出すことが可能となる。VulkanはAppleのMetalやマイクロソフトのDirect3D 12といった先発のローレベルAPIと競合するが、プラットフォーム独自の固有仕様ではなく、様々なデバイスやオペレーティングシステムをターゲットにできることが特徴である。■",
-                "デフォルトでは、TASC/ATO プラグインは手動の常用ブレーキで使用されるブレーキ指令を使用します。しかし実際の鉄道の TASC/ATO では、手動の常用ブレーキよりも細かくブレーキの強さを制御できるようになっていることがあります。車両性能とプラグインの設定を調節することで、そのような動作を再現することができます。■",
-                "Vulkanが出現する以前、クロスプラットフォームなグラフィックスAPIとしてOpenGLおよびOpenGL ESがすでに存在していた。しかし、OpenGL黎明期のハードウェア設計に由来する互換性重視のAPI設計は徐々に陳腐化し、OpenGL 4に至る頃にはすでに最新のGPUハードウェア設計との乖離が発生してしまっていた。また、OpenGL/OpenGL ESはハードウェアを高度に抽象化しており、そのためプラットフォーム間の移植性やアプリケーション開発者にとっての利便性は高いものの、AAAタイトルのゲームなどに代表されるような性能要求の厳しいソフトウェアの開発に利用する場合はオーバーヘッドが大きくなってしまい、ハードウェアの限界性能を引き出すことができなくなってしまうという問題を抱えていた。オーバーヘッドの増加による描画効率の低下はまた電力効率の低下にも直結するため、モバイル機器など電力供給の限られるデバイスにおいても効率面での影響は無視できない。このため、SIGGRAPH 2014で、レガシーな設計が蓄積しているOpenGLをリセットし、ゼロから構築し直して刷新する、次世代の標準3D API規格 (OpenGL Next Generation, glNext) の策定が始められることがアナウンスされた。このとき、マルチスレッド対応やシェーディング中間言語などの近代的な技術が導入されることが発表された。■",
-                "こんにちは。突然ですが、LWJGLを使ってゲームを作っていると出てくる、この警告、うざいですよね。これを消す方法をAIに聞いたら、'--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow'これをJavaへの引数として指定すればいいみたいです。これで実際に直りました。以上です。■",
-                "こんにちは、突然ですが、LWJGL使ってゲーム作っていると出てくる、この警告、うざいですよね。これ消す方法AIに聞いたら、'--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow'これをJavaへの引数として指定すればいいみたいです。これで実際に直りました。以上です。■",
-                "Vulkan is a cross-platform API and open standard for 3D graphics and parallelized computing. It was intended to address the shortcomings of OpenGL, and allow developers more control over the GPU. It is designed to support a wide variety of GPUs, CPUs and operating systems, and modern multi-core CPUs also.■",
-                "こんにちは。最近いろいろ(大部分はなまけw)あって、しばらくサイトを放置してたんですが、友人のサイトをみて久しぶりにやる気が出てきました。まあほんとにそれだけなんですが、他にも一応Adsenseは表示だけでも収益が出るって知ったので、ちょっとでもMONEYになるようにしようかなと。まあちょっとづつでも役立つもの増やしていこうと思います。それではさいなら。(?)■",
-        };
-
-
-        String[] chatDataset = {
-                "U:こんにちは>A:こんにちは!■",
-                "U:おはよう>A:おはようございます、今朝は何時に起きましたか？■>U:8時に起きたよ>A:8時、いいですね！昨日は何時くらいに寝ましたか？■",
-                "U:天気は？>A:私の学習データは常に更新されるわけではないので、リアルタイム性が重視される場合(今回の場合は今日の天気)、正しい情報を提供することができません。検索エンジンで'天気'などのワードで調べるのがはやいと思います。■",
-                "U:今日の天気>A:学習データは最新ではないので、正しい情報を提供することができません。検索エンジンで'天気'などのワードで調べるのがはやいと思います。■",
-                "U:眠いな>A:今朝はよく眠れましたか？時間があればお昼寝をしたりするのも手です。■",
-                "U:明日も学校かぁ>A:毎日毎日、同じ日々の繰り返しで大変ですよね。睡眠時間をしっかり取るとまだましになるはずです。■>U:睡眠時間自体は十分取ってるんだけどなぁA:>なるほど、最近は学校で何か辛いことなどはありましたか？■",
-                "U:LLMって何？>A:LLMとは、簡単に言うと現代の会話できるAIのことです。LLMについてもっと知りたい場合は、他の質問もどうぞ!■>U:ChatGPTとか、あれもLLMなの？>A:はい、ChatGPTもLLMです！他にも、GeminiやClaudeなどのAIも、LLMです。■",
-                "U:Java言語の名前の由来は何？>A:Java(プログラミング言語)の名前の由来は、開発チームが好んで飲んでいたインドネシア・ジャワ島のコーヒーに由来しています。Javaの歴史についてもっと知りたい場合は、他の質問もどんどん言ってください!■>U:ジャワコーヒーってどんな味？>A:ジャワコーヒーは、酸味が少なく、しっかりとした苦味と深いコクが特徴のコーヒーです。■",
-                "U:Javaの最新バージョンは？>A:Java(プログラミング言語)の最新LTSバージョンは、Java25の、'25.0.4.1'です。Java25では、クラス定義の簡略化や、IO.printlnが使用可能になるなど、より便利になりました。■",
-                "U:ls>A:lsは、LinuxやMacOSなどのターミナルで、ディレクトリやファイルの一覧を表示する基本コマンドです。■",
-                "U:桃太郎の桃が流れる音>A:'どんぶらこ'です。■",
-                "U:OpenGLの代替は？>A:主に'Vulkan'が挙げられます。Windows専用であれば、'DirectX'なども選択肢としてあります。VulkanやDirectXについて質問がある場合は、なんでも言ってください！■",
-                "U:こんにちは>A:こんにちは！今日は何をしますか？■",
-                "U:こんばんは>A:こんばんは。今日は何がありましたか?■",
-                "U:Windowsの最新バージョン>A:Microsoft Windowsの2026年10月2日時点での最新バージョンは、2021年10月5日にリリースされた'Windows 11'です。■",
-                "U:BVEとは>A:'BVE'とは、mackoy氏が個人で開発している、3DCG(3D描画)を用いたトレイン シミュレーターのことです。最新バージョンは2020/9/23にリリースされた、'BVE6'です。公式サイトのURLは、'https://bvets.net/'です。■",
-                "U:Hello>A:Hello! What are you doing today?■"
-        };
 
         boolean larned = false;
         ModelCheckpoint.LoadedModelData modeldata = null;
 
-        try {
-            modeldata = ModelCheckpoint.loadModel("a.omomi");
-            System.out.println("モデルの変数の展開が完了しました、学習をスキップします");
-            larned = true;
-        } catch (IOException e) {
-            System.out.println("重みファイルの読み込みに失敗しました 新規に学習を開始します");
+        IO.println();
+
+
+        String omomiPath;
+
+        while (true) {
+
+            IO.print("重みファイルのパスを指定してください (新規学習の場合はそのまま改行): ");
+            omomiPath = scanner.nextLine();
+
+            if (omomiPath != null) {
+                omomiPath = omomiPath.replace("\"", "").trim();
+            }
+
+            if (omomiPath == null || Objects.equals(omomiPath, "")) {
+                IO.println("新規学習を開始します");
+                break;
+            } else if (Files.exists(Path.of(omomiPath))) {
+                try {
+                    modeldata = ModelCheckpoint.loadModel(omomiPath);
+                    IO.println("モデルの読み込みに成功しました");
+                    larned = true;
+                    break;
+                } catch (IOException e) {
+                    IO.println("モデルの読み込みに失敗しました");
+                    e.printStackTrace();
+                }
+            } else {
+                IO.println("ファイルが見つかりません (新規学習の場合はそのまま改行)");
+            }
         }
+
 
         // 学習設定
         int numLayers = larned ? modeldata.numLayers : 6; // 層(レイヤー)の数
@@ -77,13 +66,12 @@ public class Main {
 
         double learningRate = 0.0005; // 学習率
         int batchSize = 12; // 並列数
-        int targetVocabSize = 2000; //BPEの目標コンテキスト数
+        int targetVocabSize = 100000; //BPEの目標コンテキスト数
 
         // 設定や初期化のイメージ
         int num_heads = larned ? modeldata.num_heads : 8; // ヘッド数
         int head_size = vectorSize / num_heads;
 
-        String omomilearnusedatamoto = larned  ? modeldata.omomilearnusedatamoto : "1510ty独自文書, Wikipedia";
 
         // AdamWのハイパーパラメータ
         double beta1 = 0.9;
@@ -99,25 +87,163 @@ public class Main {
         // ★ allDataset を復活させ、新規学習のときだけ訓練するようにしました
         String[] allDataset = null;
 
+        Path modelSavePath = null;
+
+        // 変数の宣言
+        String[] pretrainDataset = null;
+        String[] chatDataset = null;
+
+        String omomilearnusedatamoto;
+
+        double stopLoss = 0;
+
         if (larned) {
             // ロード成功時は保存されていた辞書を復元
             tokenizer.tokenToId = modeldata.tokenToId;
             tokenizer.idToToken = modeldata.idToToken;
             tokenizer.merges = modeldata.merges;
             vocabSize = modeldata.vocabSize;
+            omomilearnusedatamoto = modeldata.omomilearnusedatamoto;
         } else {
+
+
+            List<String> pretrainList;
+
+            while (true) {
+                IO.print("事前学習ファイルのパス: ");
+                String pathstr = scanner.nextLine();
+
+                if (pathstr != null) {
+                    pathstr = pathstr.replace("\"", "").trim();
+                }
+
+                Path path = Path.of(pathstr);
+
+                if (pathstr == null || Objects.equals(pathstr, "")) {
+                    IO.println("パスが空白またはnullです");
+                } else if (!Files.exists(path)) {
+                    IO.println("ファイルが見つかりません");
+                } else {
+                    try {
+                        pretrainList = Files.readAllLines(path, StandardCharsets.UTF_8);
+                        pretrainDataset = pretrainList.toArray(new String[0]);
+                        break;
+                    } catch (IOException e) {
+                        IO.println("ファイルの読み込みに失敗しました");
+                    }
+                }
+
+            }
+
+            List<String> chatList;
+
+            while (true) {
+                IO.print("対話学習ファイルのパス: ");
+                String pathstr = scanner.nextLine();
+
+                if (pathstr != null) {
+                    pathstr = pathstr.replace("\"", "").trim();
+                }
+
+                Path path = Path.of(pathstr);
+
+                if (pathstr == null || Objects.equals(pathstr, "")) {
+                    IO.println("パスが空白またはnullです");
+                } else if (!Files.exists(path)) {
+                    IO.println("ファイルが見つかりません");
+                } else {
+                    try {
+                        chatList = Files.readAllLines(path, StandardCharsets.UTF_8);
+                        chatDataset = chatList.toArray(new String[0]);
+                        break;
+                    } catch (IOException e) {
+                        IO.println("ファイルの読み込みに失敗しました");
+                    }
+                }
+
+            }
+
+            while (true) {
+                IO.print("学習データ一元覧ファイルのパス: ");
+                String pathstr = scanner.nextLine();
+
+                if (pathstr != null) {
+                    pathstr = pathstr.replace("\"", "").trim();
+                }
+
+                Path path = Path.of(pathstr);
+
+                if (pathstr == null || Objects.equals(pathstr, "")) {
+                    IO.println("パスが空白またはnullです");
+                } else if (!Files.exists(path)) {
+                    IO.println("ファイルが見つかりません");
+                } else {
+                    try {
+                        omomilearnusedatamoto = Files.readString(path, StandardCharsets.UTF_8).trim();
+                        break;
+                    } catch (IOException e) {
+                        IO.println("ファイルの読み込みに失敗しました");
+                    }
+                }
+
+            }
+
+
+            while (true) {
+                IO.print("学習完了時のモデル保存先パス (保存しない場合は空白): ");
+                String pathstr = scanner.nextLine();
+
+                if (pathstr != null) {
+                    pathstr = pathstr.replace("\"", "").trim();
+                }
+
+                Path path = Path.of(pathstr);
+
+                if (pathstr == null || Objects.equals(pathstr, "")) {
+                    IO.print("モデルを保存しないでよろしいですか？(y/n): ");
+                    String modelsavasinaideiika = scanner.nextLine();
+                    if (Objects.equals(modelsavasinaideiika, "y")) {
+                        IO.println("モデルを保存しません");
+                        modelSavePath = null;
+                        break;
+                    }
+                } else {
+                    modelSavePath = path;
+                    break;
+                }
+            }
+
+            while (true) {
+                IO.print("学習を停止する誤差率: ");
+                String str = scanner.nextLine();
+
+                try {
+                    // 文字列を小数に変換する
+                    stopLoss = Double.parseDouble(str);
+                } catch (NumberFormatException e) {
+                    IO.println("doubleでお願いします");
+                    continue; // もう一度入力をやり直す
+                }
+
+                IO.print(stopLoss + " でよろしいですか？(y/n): ");
+                String answer = scanner.nextLine();
+                if (Objects.equals(answer, "y")) {
+                    break;
+                }
+
+            }
+
+
             // ロード失敗時はこれまで通りデータセットを結合して訓練
             allDataset = new String[pretrainDataset.length + chatDataset.length];
             System.arraycopy(pretrainDataset, 0, allDataset, 0, pretrainDataset.length);
             System.arraycopy(chatDataset, 0, allDataset, pretrainDataset.length, chatDataset.length);
 
             tokenizer.train(allDataset, targetVocabSize, 2);
-//
-//            System.out.println("\n作成されたサブワード:");
-//            tokenizer.tokenToId.entrySet().stream().forEach(entry -> {
-//                System.out.println("  [" + entry.getValue() + "] " + entry.getKey());
-//            });
+
             vocabSize = tokenizer.getVocabSize();
+
+
         }
 
         int dModel = vectorSize;
@@ -1160,24 +1286,27 @@ public class Main {
 
                 double avgLoss = epochTotalLoss.sum() / batchSize;
 
-                IO.println("Epoch " + epoch +  " - Loss: " + avgLoss + " Mode: " + modenames[epochstatus] + " 経過時間: " + elapsedSeconds + "秒");
+                IO.println("Epoch " + epoch + " - Loss: " + avgLoss + " Mode: " + modenames[epochstatus] + " 経過時間: " + elapsedSeconds + "秒");
 
 
-                if (avgLoss < 3.0) {
+                if (avgLoss < stopLoss) {
                     epochstatus++;
                     needHeader = true; // 次のフェーズのタイトルを出すためにフラグを戻す
-                    System.out.println("ロスが3.0を下回ったため、次の学習データに進みます");
+                    System.out.println("ロスが" + stopLoss + "を下回ったため、次の学習データに進みます");
                 }
 
                 epoch++;
             }
 
-            try {
-                ModelCheckpoint.saveModel("a.omomi", numLayers, vectorSize, num_heads, dHidden, vocabSize, tokenizer.tokenToId, embeddingTable, wq, wk, wv, wGate, wUp, wDown, wOut, rmsWeightAttention, rmsWeightFfn, tokenizer.merges, omomilearnusedatamoto);
-            } catch (IOException e) {
-                e.printStackTrace();
-                IO.println("重みの保存に失敗しました!");
+            if (modelSavePath != null) {
+                try {
+                    ModelCheckpoint.saveModel(modelSavePath, numLayers, vectorSize, num_heads, dHidden, vocabSize, tokenizer.tokenToId, embeddingTable, wq, wk, wv, wGate, wUp, wDown, wOut, rmsWeightAttention, rmsWeightFfn, tokenizer.merges, omomilearnusedatamoto);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                    IO.println("重みの保存に失敗しました!");
+                }
             }
+
 
             IO.println("学習完了!");
 
@@ -1191,7 +1320,6 @@ public class Main {
         IO.println("重み学習に使用したデータ元: " + omomilearnusedatamoto);
         IO.println(" Hint: /helpでコマンド一覧と使い方を表示");
         IO.println();
-        Scanner scanner = new Scanner(System.in);
 
         double[] logits = new double[vocabSizeLocal];
         double[] probs = new double[vocabSizeLocal];

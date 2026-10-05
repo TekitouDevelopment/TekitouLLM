@@ -1,6 +1,7 @@
 package com.mc1510ty.TekitouLLM;
 
 import java.io.*;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -9,7 +10,7 @@ import java.util.Map;
 public class ModelCheckpoint {
 
     // --- 1. 保存メソッド ---
-    public static void saveModel(String filePath,
+    public static void saveModel(Path filePath,
                                  int numLayers, int vectorSize, int num_heads, int dHidden, int vocabSize,
                                  Map<String, Integer> tokenToId,
                                  double[][] embeddingTable,
@@ -19,7 +20,7 @@ public class ModelCheckpoint {
                                  double[][] rmsWeightAttention, double[][] rmsWeightFfn, List<String> merges,
                                  String omomilearnusedatamoto) throws IOException {
 
-        try (DataOutputStream dos = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(filePath)))) {
+        try (DataOutputStream dos = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(filePath.toFile())))) {
 
             // 1. ハイパーパラメータの書き込み
             dos.writeInt(numLayers);
