@@ -7,7 +7,7 @@ public class SimpleTokenizer {
     public Map<Integer, String> idToToken = new HashMap<>();
     public List<String> merges = new ArrayList<>();
 
-    private static final List<String> SPECIAL_TOKENS = Arrays.asList("U:", ">A:", "■");
+    private static final List<String> SPECIAL_TOKENS = Arrays.asList("U:", ">A:", "■", "\n");
 
     public void train(String[] corpus, int targetVocabSize, int minFrequency) {
         int id = 0;

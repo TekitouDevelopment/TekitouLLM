@@ -59,14 +59,13 @@ public class Main {
 
 
         // 学習設定
-        int numLayers = larned ? modeldata.numLayers : 6; // 層(レイヤー)の数
-        int vectorSize = larned ? modeldata.vectorSize : 128; // 次元の数
+        int numLayers = larned ? modeldata.numLayers : 12; // 層(レイヤー)の数
+        int vectorSize = larned ? modeldata.vectorSize : 256; // 次元の数
         int maxSeqLen = 384; // 最大トークン数
-
 
         double learningRate = 0.0005; // 学習率
         int batchSize = 12; // 並列数
-        int targetVocabSize = 100000; //BPEの目標コンテキスト数
+        int targetVocabSize = 10000; //BPEの目標コンテキスト数
 
         // 設定や初期化のイメージ
         int num_heads = larned ? modeldata.num_heads : 8; // ヘッド数
@@ -1338,7 +1337,7 @@ public class Main {
         int[] genEncoded = new int[maxSeqLen];
 
         while (true) {
-            System.out.print("AIへの入力文字をどうぞ: ");
+            IO.print("入力: ");
             String userInput = scanner.nextLine();
 
             if (userInput != null && userInput.startsWith("/")) {
@@ -1386,6 +1385,8 @@ public class Main {
             history.add("U:" + userInput);
             String prompt = String.join(">", history) + ">A:";
 
+            IO.println();
+
             List<Integer> promptEncodedList = tokenizer.encode(prompt);
             int promptLen = promptEncodedList.size();
 
@@ -1394,7 +1395,6 @@ public class Main {
             }
             int currentSeqLen = promptLen; // 現在のシーケンス長を管理する変数
 
-            System.out.print("入力: " + userInput + "  生成結果: " + prompt);
 
             // キャッシュをすべて0でクリア
             for (int l = 0; l < numLayers; l++) {
@@ -1724,7 +1724,6 @@ public class Main {
                 genEncoded[currentSeqLen] = bestNextId;
                 currentSeqLen++;
             }
-            System.out.println();
 
             String aiReply = generatedResponse.toString();
             history.add("A:" + aiReply);
@@ -1733,6 +1732,10 @@ public class Main {
                 history.removeFirst();
                 history.removeFirst();
             }
+
+            IO.println();
+            IO.println();
+            IO.println();
         }
     }
 
