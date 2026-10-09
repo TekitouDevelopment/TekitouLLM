@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.spi.AbstractResourceBundleProvider;
 
+
 public class Main {
 
     static void main() {
@@ -1718,7 +1719,12 @@ public class Main {
                     break;
                 }
 
-                System.out.print(predictedToken);
+                if (Objects.equals(predictedToken, "↩")) {
+                    IO.println();
+                } else {
+                    IO.print(predictedToken);
+                }
+
                 generatedResponse.append(predictedToken);
 
                 genEncoded[currentSeqLen] = bestNextId;
